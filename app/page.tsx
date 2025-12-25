@@ -882,7 +882,7 @@ export default function Home() {
                  {/* --- 2. SPIN MACHINE --- */}
                  {!isSpinning && !winner ? (
                     <div className="bg-gradient-to-br from-slate-900 to-slate-950 rounded-[3rem] p-10 border border-cyan-500/20 shadow-[0_0_60px_rgba(6,182,212,0.1)] flex flex-col items-center justify-center min-h-[350px] relative overflow-hidden">
-                       <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10"></div>
+                       <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2032%2032%27%20width=%2732%27%20height=%2732%27%20fill=%27none%27%20stroke=%27rgb(6%20182%20212%20/%200.2)%27%3e%3cpath%20d=%27M0%20.5H31.5V32%27/%3e%3c/svg%3e')] opacity-10"></div>
                        <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }} className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,cyan_360deg)] opacity-5 blur-[100px]"></motion.div>
                        
                        <div className="relative z-10 text-center w-full max-w-lg">

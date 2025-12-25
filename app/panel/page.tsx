@@ -2,7 +2,7 @@
 // app/panel/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { auth, db } from "../lib/firebase"; 
 import { doc, getDoc, collection, getDocs, setDoc, deleteDoc, updateDoc, query, writeBatch, serverTimestamp, orderBy, Timestamp } from "firebase/firestore";
 import { useRouter } from "next/navigation";
@@ -65,7 +65,7 @@ interface Prize {
 
 interface ArchivedSession {
     id: string;
-    archivedAt: Timestamp; // FIXED: Changed from any to Timestamp
+    archivedAt: Timestamp; 
     label: string;
 }
 
@@ -95,7 +95,7 @@ export default function PanelPage() {
   const [royalCandidates, setRoyalCandidates] = useState<RoyalCandidate[]>([]);
   const [royalParticipants, setRoyalParticipants] = useState<RoyalParticipant[]>([]);
   const [prizes, setPrizes] = useState<Prize[]>([]);
-   
+    
   // --- HISTORY / RECAP STATE ---
   const [historySessions, setHistorySessions] = useState<ArchivedSession[]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("active"); // 'active' or doc ID
@@ -105,7 +105,7 @@ export default function PanelPage() {
   const [royalSchedule, setRoyalSchedule] = useState("");
   const [doorprizePasscode, setDoorprizePasscode] = useState("");
   const [royalPasscode, setRoyalPasscode] = useState("");
-    
+     
   // New Status States
   const [doorprizeStatus, setDoorprizeStatus] = useState<"open" | "closed">("closed");
   const [royalStatus, setRoyalStatus] = useState<"open" | "closed">("closed");
@@ -160,7 +160,8 @@ export default function PanelPage() {
   };
 
   // --- FETCH HELPER: GET HISTORY LIST ---
-  const fetchHistorySessions = async () => {
+  // Gunakan useCallback untuk menghindari re-render loop
+  const fetchHistorySessions = useCallback(async () => {
       try {
           const q = query(collection(db, "archived_sessions"), orderBy("archivedAt", "desc"));
           const snapshot = await getDocs(q);
@@ -183,10 +184,11 @@ export default function PanelPage() {
       } catch (error) {
           console.error("Error fetching history:", error);
       }
-  };
+  }, []);
 
   // --- FETCH DATA FUNCTIONS ---
-  const fetchSchedulesAndPasscodes = async () => {
+  // Gunakan useCallback untuk menghindari re-render loop
+  const fetchSchedulesAndPasscodes = useCallback(async () => {
     try {
         const docRef = doc(db, "settings", "config");
         const docSnap = await getDoc(docRef);
@@ -204,9 +206,10 @@ export default function PanelPage() {
     } catch (error) {
         console.error("Error fetching settings:", error);
     }
-  };
+  }, []);
 
-  const fetchDoorprizeParticipants = async () => {
+  // Gunakan useCallback untuk menghindari re-render loop
+  const fetchDoorprizeParticipants = useCallback(async () => {
     try {
       const q = query(collection(db, "doorprize_participants"));
       const querySnapshot = await getDocs(q);
@@ -218,11 +221,11 @@ export default function PanelPage() {
     } catch (error) {
       console.error("Error fetching doorprize participants:", error);
     }
-  };
+  }, []);
 
   // FETCH Doorprize Winners (Active or Selected History)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const fetchDoorprizeWinners = async () => {
+  // Gunakan useCallback untuk menghindari re-render loop
+  const fetchDoorprizeWinners = useCallback(async () => {
     try {
         if (selectedSession === "active") {
             const q = query(collection(db, "doorprize_winners")); 
@@ -238,7 +241,6 @@ export default function PanelPage() {
             if (docSnap.exists()) {
                 const sessionData = docSnap.data().sessionData;
                 if (sessionData && sessionData.doorprize_winners) {
-                    // FIXED: Replaced 'any' with 'DoorprizeWinner'
                     const data = sessionData.doorprize_winners.map((w: DoorprizeWinner, index: number) => ({
                         ...w,
                         id: w.id || `hist_w_${index}`
@@ -252,12 +254,11 @@ export default function PanelPage() {
     } catch (error) {
         console.error("Error fetching winners:", error);
     }
-  };
+  }, [selectedSession]);
 
   // --- FETCH ROYAL DATA (SMART FETCH FOR HISTORY) ---
-  // Kita menggabungkan logika fetch untuk Candidates dan Participants agar konsisten saat ambil dari history (royal_winners)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const fetchRoyalData = async () => {
+  // Gunakan useCallback untuk menghindari re-render loop
+  const fetchRoyalData = useCallback(async () => {
     try {
         if (selectedSession === "active") {
             // 1. Fetch Candidates Aktif
@@ -286,24 +287,21 @@ export default function PanelPage() {
             if (docSnap.exists()) {
                 const sessionData = docSnap.data().sessionData;
                 
-                // PRIORITAS 1: Gunakan royal_winners jika ada (karena datanya sudah fix/flattened)
-                // Ini mengatasi masalah "ID hilang" di arsip lama
+                // PRIORITAS 1: Gunakan royal_winners jika ada
                 if (sessionData && sessionData.royal_winners && sessionData.royal_winners.length > 0) {
                     
                     const winners = sessionData.royal_winners;
                     
-                    // Rekonstruksi Candidates dari Winners (Synthetic IDs)
                     const syntheticCandidates: RoyalCandidate[] = winners.map((w: RoyalWinner, index: number) => ({
                         id: `hist_c_${index}`,
                         name: w.name,
                         company: w.company
                     }));
 
-                    // Rekonstruksi Participants/Slots agar match dengan Synthetic Candidates
                     const syntheticParticipants: RoyalParticipant[] = winners.map((w: RoyalWinner, index: number) => ({
                         id: `hist_p_${index}`,
                         rank: w.rank,
-                        candidateId: `hist_c_${index}`, // Link ke synthetic candidate
+                        candidateId: `hist_c_${index}`, 
                         title: w.title
                     }));
 
@@ -311,25 +309,18 @@ export default function PanelPage() {
                     setRoyalParticipants(syntheticParticipants.sort((a, b) => a.rank - b.rank));
 
                 } else if (sessionData && sessionData.royal_slots) {
-                    // PRIORITAS 2: Jika royal_winners kosong, coba pakai slots + candidates (Legacy fallback)
-                    // Note: Ini beresiko jika arsip lama tidak menyimpan ID candidate
-                    
-                    // FIXED: Replaced 'any' with specific types
+                    // PRIORITAS 2: Legacy fallback
                     const sData = sessionData.royal_slots.map((s: RoyalParticipant, idx: number) => ({
                         ...s, id: s.id || `hist_p_${idx}`
                     }));
                     
                     let cData: RoyalCandidate[] = [];
                     if(sessionData.royal_candidates) {
-                        // Coba map, jika ID tidak ada, ini mungkin akan fail link-nya, 
-                        // tapi setidaknya data masuk.
-                        // FIXED: Replaced 'any' with 'RoyalCandidate'
                         cData = sessionData.royal_candidates.map((c: RoyalCandidate, idx: number) => ({
-                            ...c, id: c.id || `hist_c_fallback_${idx}` // ID mungkin tidak match dengan slot
+                            ...c, id: c.id || `hist_c_fallback_${idx}` 
                         }));
                     }
 
-                    // FIXED: Replaced 'any' with 'RoyalParticipant'
                     setRoyalParticipants(sData.sort((a: RoyalParticipant, b: RoyalParticipant) => a.rank - b.rank));
                     setRoyalCandidates(cData);
                 } else {
@@ -341,9 +332,10 @@ export default function PanelPage() {
     } catch (error) {
         console.error("Error fetching royal data:", error);
     }
-  };
+  }, [selectedSession]);
 
-  const fetchPrizes = async () => {
+  // Gunakan useCallback untuk menghindari re-render loop
+  const fetchPrizes = useCallback(async () => {
     try {
       const q = query(collection(db, "prizes"));
       const querySnapshot = await getDocs(q);
@@ -355,7 +347,7 @@ export default function PanelPage() {
     } catch (error) {
       console.error("Error fetching prizes:", error);
     }
-  };
+  }, []);
 
   // Fetch data based on active tab AND selectedSession
   useEffect(() => {
@@ -385,7 +377,7 @@ export default function PanelPage() {
        fetchPrizes();
        if(selectedSession === 'active') fetchDoorprizeWinners(); 
     }
-  }, [activeTab, fetchDoorprizeWinners, fetchRoyalData, selectedSession]);
+  }, [activeTab, fetchDoorprizeWinners, fetchRoyalData, selectedSession, fetchSchedulesAndPasscodes, fetchHistorySessions, fetchDoorprizeParticipants, fetchPrizes]);
 
   // --- HANDLER SETTINGS (Schedule, Passcode, Status) ---
   const handleSaveSchedule = async (type: "doorprize" | "royal", value: string) => {
@@ -1936,7 +1928,7 @@ function RoyalView({
               <div>
                 <label className="text-xs text-slate-400 font-bold uppercase mb-1 block">Pilih Kandidat</label>
                 <select 
-                  value={item.candidateId} 
+                  value={item.candidateId || ""} 
                   onChange={(e) => handleChange(item.id, "candidateId", e.target.value)} 
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 focus:outline-blue-500"
                 >

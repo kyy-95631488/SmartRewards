@@ -97,9 +97,6 @@ export default function Home() {
   const [passcodeInput, setPasscodeInput] = useState("");
   const [authorized, setAuthorized] = useState<{ doorprize: boolean; royal: boolean }>({ doorprize: false, royal: false });
 
-  // Real-time Timer Check State
-  const [currentTime, setCurrentTime] = useState(0);
-
   // --- STATE INTERACTIVE ---
   const [isSpinning, setIsSpinning] = useState(false);
   const [rollingName, setRollingName] = useState("Ready?");
@@ -132,6 +129,7 @@ export default function Home() {
 
   const generateConfetti = (amount = 50) => {
     const colors = ['bg-pink-500', 'bg-cyan-400', 'bg-yellow-400', 'bg-purple-500', 'bg-white'];
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     return Array.from({ length: amount }).map((_) => ({
       id: Math.random(),
       x: (Math.random() - 0.5) * (typeof window !== 'undefined' ? window.innerWidth : 1000), 
@@ -154,12 +152,6 @@ export default function Home() {
 
   // --- FETCH DATA ---
   useEffect(() => {
-    // Timer Interval
-    setCurrentTime(Date.now()); 
-    const timeInterval = setInterval(() => {
-        setCurrentTime(Date.now());
-    }, 1000);
-
     // 1. Fetch Config
     const unsubConfig = onSnapshot(
       doc(db, "settings", "config"),
@@ -228,7 +220,6 @@ export default function Home() {
     });
 
     return () => {
-      clearInterval(timeInterval);
       unsubConfig();
       unsubParticipants();
       unsubPrizes();
@@ -238,7 +229,6 @@ export default function Home() {
       unsubRoyalWinners();
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
   // --- COMPUTED DATA ---

@@ -134,6 +134,7 @@ export default function Home() {
 
   const generateConfetti = (amount = 50) => {
     const colors = ['bg-pink-500', 'bg-cyan-400', 'bg-yellow-400', 'bg-purple-500', 'bg-white'];
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     return Array.from({ length: amount }).map((_) => ({
       id: Math.random(),
       x: (Math.random() - 0.5) * (typeof window !== 'undefined' ? window.innerWidth : 1000), 

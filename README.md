@@ -1,4 +1,4 @@
-# 💎 SmartRewards - Event Gamification System
+# 💎 SmartRewards
 
 <div align="center">
 

@@ -138,12 +138,12 @@ Berikut adalah gambaran singkat struktur project penting:
 
 | Halaman Login | Dashboard Admin |
 | :---: | :---: |
-| ![Login UI](https://via.placeholder.com/400x250?text=Glassmorphism+Login) | ![Admin Dashboard](https://via.placeholder.com/400x250?text=Admin+Panel+Analytics) |
+| ![Login UI](./assets/images/login.png) | ![Admin Dashboard](./assets/images/dashboard.png) |
 | *Login aman dengan animasi background* | *Manajemen data & export report* |
 
 | Event Randomizer | Royal Reveal |
 | :---: | :---: |
-| ![Doorprize Spin](https://via.placeholder.com/400x250?text=Spin+Animation) | ![Royal Winner](https://via.placeholder.com/400x250?text=Winner+Reveal) |
+| ![Royal Top Page](./assets/images/royal.png) | ![Doorprize Page](./assets/images/doorprize.png) |
 | *Pengacakan pemenang real-time* | *Animasi pengumuman pemenang* |
 
 ---

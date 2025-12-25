@@ -76,7 +76,7 @@ Ikuti langkah-langkah berikut untuk menjalankan project ini di komputer lokal An
 
 ### 1. Clone Repository
 ```bash
-git clone [https://github.com/kyy-95631488/SmartRewards.git](https://github.com/username/project-name.git)
+git clone [https://github.com/kyy-95631488/SmartRewards.git](https://github.com/kyy-95631488/SmartRewards.git)
 cd SmartRewards
 ```
 

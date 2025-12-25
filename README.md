@@ -139,12 +139,12 @@ Berikut adalah gambaran singkat struktur project penting:
 | Halaman Login | Dashboard Admin |
 | :---: | :---: |
 | ![Login UI](./assets/images/login.png) | ![Admin Dashboard](./assets/images/dashboard.png) |
-| *Login aman dengan animasi background* | *Manajemen data & export report* |
+| *Sistem login aman dengan animasi latar interaktif* | *Dashboard admin untuk manajemen data dan ekspor laporan* |
 
-| Event Randomizer | Royal Reveal |
+| Event Reveal Award Royal | Event Randomizer Doorprize |
 | :---: | :---: |
 | ![Royal Top Page](./assets/images/royal.png) | ![Doorprize Page](./assets/images/doorprize.png) |
-| *Pengacakan pemenang real-time* | *Animasi pengumuman pemenang* |
+| *Animasi reveal pemenang Award Royal yang elegan* | *Pengacakan pemenang doorprize secara real-time dan transparan* |
 
 ---
 

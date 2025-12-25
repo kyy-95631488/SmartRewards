@@ -620,7 +620,7 @@ export default function Home() {
                     <h1 className="text-5xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-200 to-slate-400 drop-shadow-[0_0_30px_rgba(255,255,255,0.3)] tracking-tighter">GATHERING 2025</h1>
                     <div className="flex items-center justify-center gap-4 mt-4">
                       <div className="h-px w-12 bg-blue-500/50"></div>
-                      <p className="text-lg md:text-2xl text-blue-300 font-light tracking-[0.3em] uppercase">Appreciation Night</p>
+                      <p className="text-lg md:text-2xl text-blue-300 font-light tracking-[0.3em] uppercase">Annual Celebration</p>
                       <div className="h-px w-12 bg-blue-500/50"></div>
                     </div>
                 </motion.div>

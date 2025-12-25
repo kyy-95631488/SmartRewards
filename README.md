@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Project Banner](https://via.placeholder.com/1200x400?text=SmartRewards+Event+System)
+![Project Banner](./assets/images/banner.png)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![Firebase](https://img.shields.io/badge/Firebase-Auth%20%26%20Firestore-orange?style=for-the-badge&logo=firebase)](https://firebase.google.com/)

@@ -82,7 +82,6 @@ export default function Home() {
   // Royal Data
   const [royalCandidates, setRoyalCandidates] = useState<RoyalCandidate[]>([]);
   const [royalSlots, setRoyalSlots] = useState<RoyalParticipant[]>([]);
-  // State baru untuk menyimpan data pemenang Royal dari DB
   const [royalWinnersDb, setRoyalWinnersDb] = useState<MergedRoyalWinner[]>([]); 
   
   // Config & Schedule & Auth
@@ -124,12 +123,17 @@ export default function Home() {
     setPendingRoyal(null);
     setConfettiParticles([]);
     if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
-    // Note: royalStep tidak di-reset di sini agar sinkron dengan DB
+  };
+
+  // Helper untuk Random yang "Murni" (Cryptographically Secure)
+  const getSecureRandomInt = (max: number) => {
+    const array = new Uint32Array(1);
+    window.crypto.getRandomValues(array);
+    return array[0] % max;
   };
 
   const generateConfetti = (amount = 50) => {
     const colors = ['bg-pink-500', 'bg-cyan-400', 'bg-yellow-400', 'bg-purple-500', 'bg-white'];
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     return Array.from({ length: amount }).map((_) => ({
       id: Math.random(),
       x: (Math.random() - 0.5) * (typeof window !== 'undefined' ? window.innerWidth : 1000), 
@@ -167,11 +171,6 @@ export default function Home() {
             doorprize: savedDoorprizeCode === data.doorprizePasscode,
             royal: savedRoyalCode === data.royalPasscode
           });
-
-          // Kickback logic handled in handleAccessRequest mostly, but aggressive check here:
-          if(view === 'doorprize' && data.doorprizeStatus === 'closed') {
-             // Exception: Don't kick if completed (logic handled below)
-          }
         }
       }
     );
@@ -211,11 +210,9 @@ export default function Home() {
     });
 
     // 6. Royal Winners (Already Revealed)
-    // Penting: Mengambil data pemenang yang sudah disimpan di DB untuk menentukan step
     const unsubRoyalWinners = onSnapshot(collection(db, "royal_winners"), (snapshot) => {
         const winners = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MergedRoyalWinner));
         setRoyalWinnersDb(winners);
-        // Sinkronisasi Step: Step saat ini = jumlah pemenang yang sudah ada di DB
         setRoyalStep(winners.length);
     });
 
@@ -247,6 +244,7 @@ export default function Home() {
 
   // --- COMPLETION CHECK (BYPASS LOGIC) ---
   const isRoyalCompleted = royalSlots.length > 0 && royalWinnersDb.length >= royalSlots.length;
+  // Jika prizes sudah di-load (>0) tapi total sisa stok 0, maka dianggap SELESAI
   const isDoorprizeCompleted = prizes.length > 0 && totalItemsRemaining === 0;
 
   // --- AUTH & NAVIGATION LOGIC ---
@@ -254,12 +252,12 @@ export default function Home() {
     const status = targetView === "doorprize" ? config.doorprizeStatus : config.royalStatus;
     
     // 1. Cek Apakah Event Sudah Selesai (Bypass Password)
-    // Jika target Royal DAN data di DB sudah lengkap = Boleh masuk tanpa password
     if (targetView === "royal" && isRoyalCompleted) {
         setView(targetView);
         return;
     }
-    // Jika target Doorprize DAN stok hadiah habis = Boleh masuk tanpa password
+    
+    // BYPASS DOORPRIZE: Jika stok hadiah HABIS, izinkan masuk tanpa password
     if (targetView === "doorprize" && isDoorprizeCompleted) {
         setView(targetView);
         return;
@@ -271,7 +269,7 @@ export default function Home() {
         return;
     }
 
-    // 3. Cek Passcode (Jika belum selesai & status open)
+    // 3. Cek Passcode
     if (authorized[targetView]) {
         setView(targetView);
     } else {
@@ -304,7 +302,6 @@ export default function Home() {
     setRevealedRoyalWinner(null);
     setConfettiParticles([]);
 
-    // Animasi Rolling Nama
     spinIntervalRef.current = setInterval(() => {
       const randomName = royalCandidates.length > 0 
         ? royalCandidates[Math.floor(Math.random() * royalCandidates.length)].name 
@@ -312,19 +309,17 @@ export default function Home() {
       setRollingName(randomName);
     }, 50);
 
-    // Stop & Show Confirmation
     setTimeout(() => {
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
       setRollingName(currentWinnerData.name);
       setIsRoyalSpinning(false);
-      setPendingRoyal({ winner: currentWinnerData }); // Masuk mode konfirmasi
+      setPendingRoyal({ winner: currentWinnerData }); 
     }, 3000);
   };
 
   const confirmRoyalWinner = async () => {
       if(!pendingRoyal) return;
       
-      // 1. Simpan ke Database (Royal Winners History)
       try {
         await addDoc(collection(db, "royal_winners"), {
           rank: pendingRoyal.winner.rank,
@@ -333,18 +328,15 @@ export default function Home() {
           company: pendingRoyal.winner.company,
           timestamp: serverTimestamp()
         });
-        // Note: setRoyalStep tidak perlu manual update di sini, 
-        // karena onSnapshot akan mendeteksi penambahan data dan mengupdate royalStep otomatis.
       } catch (error) {
         console.error("Error saving royal winner:", error);
-        alert("Gagal menyimpan data Royal ke database. Periksa koneksi internet.");
+        alert("Gagal menyimpan data Royal ke database.");
         return;
       }
 
-      // 2. Update UI
       setRevealedRoyalWinner(pendingRoyal.winner);
       setConfettiParticles(generateConfetti(100));
-      setPendingRoyal(null); // Clear pending
+      setPendingRoyal(null);
   };
 
   const retryRoyal = () => {
@@ -352,12 +344,21 @@ export default function Home() {
       setRollingName("Ready?");
   };
 
-  // --- LOGIC ACTIONS: DOORPRIZE ---
+  // --- LOGIC ACTIONS: DOORPRIZE (UPDATED FOR PURE RANDOM) ---
   const handleDoorprizeSpin = async () => {
-    // 1. Validasi
+    // 1. Ambil data stok hadiah yang tersedia
     const availablePrizes = prizes.filter(p => p.stock > 0);
-    if (isSpinning || availablePrizes.length === 0 || participants.length === 0) {
-      if(participants.length === 0) alert("Data peserta kosong!");
+    
+    // 2. Filter Peserta: Hilangkan yang sudah pernah menang
+    // Menggunakan nama sebagai unique identifier (bisa diganti ID jika perlu)
+    const previousWinnerNames = doorprizeLog.map(log => log.name);
+    const eligibleParticipants = participants.filter(p => !previousWinnerNames.includes(p.name));
+
+    // Validasi
+    if (isSpinning || availablePrizes.length === 0 || eligibleParticipants.length === 0) {
+      if (participants.length === 0) alert("Data peserta kosong!");
+      else if (eligibleParticipants.length === 0) alert("Semua peserta sudah mendapatkan hadiah!");
+      else if (availablePrizes.length === 0) alert("Stok hadiah habis!");
       return;
     }
     
@@ -366,23 +367,41 @@ export default function Home() {
     setPendingDoorprize(null);
     setConfettiParticles([]); 
 
-    // 2. Animasi Rolling
+    // Animasi Rolling (Visual Effect)
+    // Tetap menggunakan seluruh peserta agar animasi terlihat ramai, 
+    // tapi hasil akhir pasti dari eligibleParticipants
     spinIntervalRef.current = setInterval(() => {
-      setRollingName(participants[Math.floor(Math.random() * participants.length)].name);
+      const randomIndex = Math.floor(Math.random() * participants.length);
+      setRollingName(participants[randomIndex].name);
     }, 50); 
 
-    // 3. Tentukan Pemenang & Hadiah SECARA ACAK
     setTimeout(async () => {
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
       
-      const finalWinner = participants[Math.floor(Math.random() * participants.length)];
-      const randomPrizeIndex = Math.floor(Math.random() * availablePrizes.length);
-      const selectedPrize = availablePrizes[randomPrizeIndex];
+      // --- ALGORITMA PENGACAKAN MURNI ---
+      
+      // A. Pilih Pemenang (Dari peserta yang BELUM menang)
+      // Menggunakan Crypto Random agar tidak bisa ditebak/pola berulang
+      const randomWinnerIndex = getSecureRandomInt(eligibleParticipants.length);
+      const finalWinner = eligibleParticipants[randomWinnerIndex];
+
+      // B. Pilih Hadiah (Weighted Random / Berdasarkan Stok Fisik)
+      // Kita buat "Pool" tiket hadiah. Jika Mug ada 50, maka ada 50 tiket Mug.
+      // Ini memastikan peluang dapat Mug jauh lebih besar daripada TV yang stoknya 1.
+      const prizePool: Prize[] = [];
+      availablePrizes.forEach(prize => {
+          for(let i = 0; i < prize.stock; i++) {
+              prizePool.push(prize);
+          }
+      });
+
+      // Kocok Pool Hadiah (Fisher-Yates Shuffle like logic via index)
+      const randomPrizeIndex = getSecureRandomInt(prizePool.length);
+      const selectedPrize = prizePool[randomPrizeIndex];
 
       setRollingName(finalWinner.name);
       setIsSpinning(false);
 
-      // 4. Masuk Mode Konfirmasi
       setPendingDoorprize({ winner: finalWinner, prize: selectedPrize });
     }, 4000); 
   };
@@ -392,19 +411,16 @@ export default function Home() {
 
       const { winner: winParticipant, prize } = pendingDoorprize;
 
-      // 1. Simpan ke State Utama (Tampil Pemenang)
       setWinner({ name: winParticipant.name, prize: prize });
       setConfettiParticles(generateConfetti(100));
       
-      // 2. Update Database
       try {
           const prizeRef = doc(db, "prizes", prize.id);
-          // Update stok hadiah
+          // Optimistic Update: Kurangi stok
           await updateDoc(prizeRef, {
             stock: prize.stock - 1
           });
 
-          // Simpan riwayat pemenang
           await addDoc(collection(db, "doorprize_winners"), {
             name: winParticipant.name,
             prizeName: prize.name,
@@ -413,10 +429,10 @@ export default function Home() {
           });
       } catch (error) {
           console.error("Error saving winner:", error);
-          alert("Gagal menyimpan ke database, cek koneksi internet.");
+          alert("Gagal menyimpan ke database.");
       }
 
-      setPendingDoorprize(null); // Clear pending
+      setPendingDoorprize(null); 
   };
 
   const retryDoorprize = () => {
@@ -702,7 +718,7 @@ export default function Home() {
                       <div className="w-full max-w-4xl h-[400px] flex flex-col items-center justify-center relative">
                           <div className="absolute inset-0 bg-yellow-500/5 blur-[100px] rounded-full animate-pulse"></div>
                           {isRoyalSpinning ? (
-                                <div className="text-yellow-500 font-mono text-sm tracking-[0.5em] mb-6 animate-pulse uppercase">Searching Database...</div>
+                                <div className="text-yellow-500 font-mono text-sm tracking-[0.5em] mb-6 animate-pulse uppercase">Mendapatkan Nama...</div>
                           ) : (
                                 <div className="text-green-400 font-mono text-sm tracking-[0.5em] mb-6 uppercase">Winner Found!</div>
                           )}
@@ -718,12 +734,12 @@ export default function Home() {
                           <div className="absolute inset-0 pointer-events-none z-50">
                               {confettiParticles.map((p,i) => (
                                   <motion.div 
-                                      key={i} 
-                                      initial={{ y: p.y, x: p.x, opacity: 1 }}
-                                      animate={{ y: p.y + 800, x: p.x + p.offsetX, rotate: 360 }}
-                                      transition={{ duration: p.duration, ease: "easeOut" }}
-                                      className={`absolute rounded-full ${p.color}`} 
-                                      style={{ width: p.size, height: p.size, left: '50%' }} 
+                                    key={i} 
+                                    initial={{ y: p.y, x: p.x, opacity: 1 }}
+                                    animate={{ y: p.y + 800, x: p.x + p.offsetX, rotate: 360 }}
+                                    transition={{ duration: p.duration, ease: "easeOut" }}
+                                    className={`absolute rounded-full ${p.color}`} 
+                                    style={{ width: p.size, height: p.size, left: '50%' }} 
                                   />
                               ))}
                           </div>
@@ -780,12 +796,12 @@ export default function Home() {
                           <div className="absolute inset-0 pointer-events-none z-0">
                               {confettiParticles.map((p,i) => (
                                   <motion.div 
-                                      key={i} 
-                                      initial={{ y: p.y, x: p.x, opacity: 1 }}
-                                      animate={{ y: p.y + 800, x: p.x + p.randomX, rotate: 360 }}
-                                      transition={{ duration: p.randomDuration, ease: "easeOut" }}
-                                      className={`absolute rounded-full ${p.color}`} 
-                                      style={{ width: p.size, height: p.size, left: '50%' }} 
+                                    key={i} 
+                                    initial={{ y: p.y, x: p.x, opacity: 1 }}
+                                    animate={{ y: p.y + 800, x: p.x + p.randomX, rotate: 360 }}
+                                    transition={{ duration: p.randomDuration, ease: "easeOut" }}
+                                    className={`absolute rounded-full ${p.color}`} 
+                                    style={{ width: p.size, height: p.size, left: '50%' }} 
                                   />
                               ))}
                           </div>
@@ -825,7 +841,7 @@ export default function Home() {
             <motion.div key="doorprize" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col xl:flex-row gap-8 w-full max-w-[1600px] mx-auto pb-10">
               
               <div className="w-full xl:w-2/3 order-1 flex flex-col gap-8">
-                 
+                  
                  <CountdownTimer targetDate={config.doorprizeStart} title="Waktu Menuju Doorprize" theme="cyan" />
 
                  {/* --- 1. DAFTAR HADIAH (Modern Grid) --- */}
@@ -897,7 +913,7 @@ export default function Home() {
                        {/* Scanning Line */}
                        <motion.div animate={{ top: ['0%', '100%', '0%'] }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }} className="absolute left-0 w-full h-1 bg-cyan-500/50 blur-sm shadow-[0_0_20px_cyan]"></motion.div>
                        
-                       <p className="text-cyan-400 font-mono tracking-[0.5em] text-sm mb-8 animate-pulse">SYSTEM PROCESSING...</p>
+                       <p className="text-cyan-400 font-mono tracking-[0.5em] text-sm mb-8 animate-pulse">Mengacak Perserta...</p>
                        <h2 className="text-5xl md:text-7xl font-black text-white break-words w-full blur-[1px] animate-pulse">{rollingName}</h2>
                     </div>
                  ) : (

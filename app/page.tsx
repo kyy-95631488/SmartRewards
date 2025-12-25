@@ -1,4 +1,3 @@
-// app/page.tsx
 "use client";
 
 import { useState, useEffect, useRef } from "react";
@@ -6,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Crown, Gift, ArrowLeft, Trophy, ChevronRight, 
   Medal, Search, Zap, List, X, History, PartyPopper, 
-  Box, HelpCircle, PackageOpen, Loader2, Clock, Calendar
+  Box, PackageOpen, Clock, Calendar, Sparkles, Lock, Save, RotateCcw
 } from "lucide-react";
 
 // --- FIREBASE IMPORTS ---
@@ -62,9 +61,13 @@ interface MergedRoyalWinner {
 interface AppConfig {
   doorprizeStart: string;
   royalStart: string;
+  doorprizeStatus: "open" | "closed";
+  royalStatus: "open" | "closed";
+  doorprizePasscode: string;
+  royalPasscode: string;
 }
 
-type Particle = { id: number; x: number; y: number; color: string; };
+type Particle = { id: number; x: number; y: number; color: string; size: number; offsetX: number; duration: number; randomX: number; randomDuration: number };
 
 export default function Home() {
   const [view, setView] = useState<"menu" | "royal" | "doorprize">("menu");
@@ -79,17 +82,32 @@ export default function Home() {
   // Royal Data
   const [royalCandidates, setRoyalCandidates] = useState<RoyalCandidate[]>([]);
   const [royalSlots, setRoyalSlots] = useState<RoyalParticipant[]>([]);
+  // State baru untuk menyimpan data pemenang Royal dari DB
+  const [royalWinnersDb, setRoyalWinnersDb] = useState<MergedRoyalWinner[]>([]); 
   
-  // Config & Schedule
-  const [config, setConfig] = useState<{ doorprizeStart: string; royalStart: string }>({ doorprizeStart: "", royalStart: "" });
+  // Config & Schedule & Auth
+  const [config, setConfig] = useState<AppConfig>({ 
+    doorprizeStart: "", royalStart: "", 
+    doorprizeStatus: "closed", royalStatus: "closed",
+    doorprizePasscode: "", royalPasscode: ""
+  });
   
+  // Passcode States
+  const [passcodeModal, setPasscodeModal] = useState<"doorprize" | "royal" | null>(null);
+  const [passcodeInput, setPasscodeInput] = useState("");
+  const [authorized, setAuthorized] = useState<{ doorprize: boolean; royal: boolean }>({ doorprize: false, royal: false });
+
   // Real-time Timer Check State
-  // eslint-disable-next-line react-hooks/purity
-  const [currentTime, setCurrentTime] = useState(Date.now());
+  const [currentTime, setCurrentTime] = useState(0);
 
   // --- STATE INTERACTIVE ---
   const [isSpinning, setIsSpinning] = useState(false);
   const [rollingName, setRollingName] = useState("Ready?");
+  
+  // Confirmation States
+  const [pendingDoorprize, setPendingDoorprize] = useState<{ winner: Participant; prize: Prize } | null>(null);
+  const [pendingRoyal, setPendingRoyal] = useState<{ winner: MergedRoyalWinner } | null>(null);
+
   const [winner, setWinner] = useState<{ name: string; prize: Prize } | null>(null);
 
   const [royalStep, setRoyalStep] = useState(0); 
@@ -99,19 +117,69 @@ export default function Home() {
   const [confettiParticles, setConfettiParticles] = useState<Particle[]>([]);
   const spinIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // --- HELPER FUNCTIONS ---
+  
+  const resetAll = () => {
+    setWinner(null);
+    setRevealedRoyalWinner(null);
+    setRollingName("Ready?");
+    setPendingDoorprize(null);
+    setPendingRoyal(null);
+    setConfettiParticles([]);
+    if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
+    // Note: royalStep tidak di-reset di sini agar sinkron dengan DB
+  };
+
+  const generateConfetti = (amount = 50) => {
+    const colors = ['bg-pink-500', 'bg-cyan-400', 'bg-yellow-400', 'bg-purple-500', 'bg-white'];
+    return Array.from({ length: amount }).map((_) => ({
+      id: Math.random(),
+      x: (Math.random() - 0.5) * (typeof window !== 'undefined' ? window.innerWidth : 1000), 
+      y: -100 - Math.random() * 500,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      size: Math.random() * 8 + 4,
+      offsetX: (Math.random() - 0.5) * 200,
+      duration: 2 + Math.random(),
+      randomX: (Math.random() - 0.5) * 200,
+      randomDuration: 2 + Math.random()
+    }));
+  };
+
+  const triggerCelebration = () => {
+      setConfettiParticles([]);
+      setTimeout(() => {
+        setConfettiParticles(generateConfetti(100));
+      }, 50);
+  };
+
   // --- FETCH DATA ---
   useEffect(() => {
-    // Timer Interval untuk Update Waktu Realtime
+    // Timer Interval
+    setCurrentTime(Date.now()); 
     const timeInterval = setInterval(() => {
         setCurrentTime(Date.now());
     }, 1000);
 
-    // 1. Fetch Config (Jadwal)
+    // 1. Fetch Config
     const unsubConfig = onSnapshot(
       doc(db, "settings", "config"),
       (docSnapshot) => {
         if (docSnapshot.exists()) {
-          setConfig(docSnapshot.data() as AppConfig);
+          const data = docSnapshot.data() as AppConfig;
+          setConfig(data);
+          
+          const savedDoorprizeCode = localStorage.getItem("doorprize_passcode");
+          const savedRoyalCode = localStorage.getItem("royal_passcode");
+          
+          setAuthorized({
+            doorprize: savedDoorprizeCode === data.doorprizePasscode,
+            royal: savedRoyalCode === data.royalPasscode
+          });
+
+          // Kickback logic handled in handleAccessRequest mostly, but aggressive check here:
+          if(view === 'doorprize' && data.doorprizeStatus === 'closed') {
+             // Exception: Don't kick if completed (logic handled below)
+          }
         }
       }
     );
@@ -126,7 +194,7 @@ export default function Home() {
       setPrizes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Prize)));
     });
 
-    // 4. Log Pemenang
+    // 4. Log Pemenang Doorprize
     const qHistory = query(collection(db, "doorprize_winners"), orderBy("timestamp", "desc"));
     const unsubHistory = onSnapshot(qHistory, (snapshot) => {
       const logs = snapshot.docs.map(doc => {
@@ -140,7 +208,7 @@ export default function Home() {
       setDoorprizeLog(logs);
     });
 
-    // 5. Royal Data
+    // 5. Royal Data Slots & Candidates
     const unsubRoyalSlots = onSnapshot(query(collection(db, "royal_participants"), orderBy("rank", "asc")), (snapshot) => {
       setRoyalSlots(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RoyalParticipant)));
     });
@@ -148,6 +216,15 @@ export default function Home() {
     const unsubCandidates = onSnapshot(collection(db, "royal_candidates"), (snapshot) => {
       setRoyalCandidates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RoyalCandidate)));
       setLoading(false);
+    });
+
+    // 6. Royal Winners (Already Revealed)
+    // Penting: Mengambil data pemenang yang sudah disimpan di DB untuk menentukan step
+    const unsubRoyalWinners = onSnapshot(collection(db, "royal_winners"), (snapshot) => {
+        const winners = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MergedRoyalWinner));
+        setRoyalWinnersDb(winners);
+        // Sinkronisasi Step: Step saat ini = jumlah pemenang yang sudah ada di DB
+        setRoyalStep(winners.length);
     });
 
     return () => {
@@ -158,9 +235,11 @@ export default function Home() {
       unsubHistory();
       unsubRoyalSlots();
       unsubCandidates();
+      unsubRoyalWinners();
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   // --- COMPUTED DATA ---
   const mergedRoyalWinners: MergedRoyalWinner[] = royalSlots.map(slot => {
@@ -176,34 +255,57 @@ export default function Home() {
 
   const totalItemsRemaining = prizes.reduce((acc, curr) => acc + curr.stock, 0);
 
-  // Check Schedule Status
-  const isRoyalOpen = !config.royalStart || currentTime >= new Date(config.royalStart).getTime();
-  const isDoorprizeOpen = !config.doorprizeStart || currentTime >= new Date(config.doorprizeStart).getTime();
+  // --- COMPLETION CHECK (BYPASS LOGIC) ---
+  const isRoyalCompleted = royalSlots.length > 0 && royalWinnersDb.length >= royalSlots.length;
+  const isDoorprizeCompleted = prizes.length > 0 && totalItemsRemaining === 0;
 
-  // --- HELPER FUNCTIONS ---
-  const generateConfetti = (amount = 40) => {
-    const colors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-purple-500', 'bg-pink-500'];
-    return Array.from({ length: amount }).map((_, i) => ({
-      id: Math.random(),
-      x: (Math.random() - 0.5) * 800, 
-      y: -100 - Math.random() * 400,
-      color: colors[Math.floor(Math.random() * colors.length)]
-    }));
+  // --- AUTH & NAVIGATION LOGIC ---
+  const handleAccessRequest = (targetView: "royal" | "doorprize") => {
+    const status = targetView === "doorprize" ? config.doorprizeStatus : config.royalStatus;
+    
+    // 1. Cek Apakah Event Sudah Selesai (Bypass Password)
+    // Jika target Royal DAN data di DB sudah lengkap = Boleh masuk tanpa password
+    if (targetView === "royal" && isRoyalCompleted) {
+        setView(targetView);
+        return;
+    }
+    // Jika target Doorprize DAN stok hadiah habis = Boleh masuk tanpa password
+    if (targetView === "doorprize" && isDoorprizeCompleted) {
+        setView(targetView);
+        return;
+    }
+
+    // 2. Cek Status Open/Closed (Hanya jika belum selesai)
+    if (status === "closed") {
+        alert("Sesi ini belum dibuka oleh Admin.");
+        return;
+    }
+
+    // 3. Cek Passcode (Jika belum selesai & status open)
+    if (authorized[targetView]) {
+        setView(targetView);
+    } else {
+        setPasscodeModal(targetView);
+        setPasscodeInput("");
+    }
   };
 
-  const triggerCelebration = () => {
-      setConfettiParticles(prev => [...prev.slice(-50), ...generateConfetti(50)]);
+  const submitPasscode = () => {
+    if (!passcodeModal) return;
+    
+    const correctCode = passcodeModal === "doorprize" ? config.doorprizePasscode : config.royalPasscode;
+
+    if (passcodeInput === correctCode) {
+        localStorage.setItem(`${passcodeModal}_passcode`, correctCode);
+        setAuthorized(prev => ({ ...prev, [passcodeModal]: true }));
+        setView(passcodeModal);
+        setPasscodeModal(null);
+    } else {
+        alert("Passcode Salah!");
+    }
   };
 
-  const resetAll = () => {
-    setWinner(null);
-    setRevealedRoyalWinner(null);
-    setRollingName("Ready?");
-    setConfettiParticles([]);
-    if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
-  };
-
-  // --- LOGIC ACTIONS ---
+  // --- LOGIC ACTIONS: ROYAL ---
   const handleRoyalReveal = () => {
     const currentWinnerData = mergedRoyalWinners[royalStep];
     if (isRoyalSpinning || !currentWinnerData) return;
@@ -212,27 +314,57 @@ export default function Home() {
     setRevealedRoyalWinner(null);
     setConfettiParticles([]);
 
+    // Animasi Rolling Nama
     spinIntervalRef.current = setInterval(() => {
       const randomName = royalCandidates.length > 0 
         ? royalCandidates[Math.floor(Math.random() * royalCandidates.length)].name 
         : "Loading...";
       setRollingName(randomName);
-    }, 60);
+    }, 50);
 
+    // Stop & Show Confirmation
     setTimeout(() => {
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
       setRollingName(currentWinnerData.name);
-      
-      setTimeout(() => {
-        setIsRoyalSpinning(false);
-        setRevealedRoyalWinner(currentWinnerData);
-        setRoyalStep((prev) => prev + 1);
-        setConfettiParticles(generateConfetti(60));
-      }, 500);
+      setIsRoyalSpinning(false);
+      setPendingRoyal({ winner: currentWinnerData }); // Masuk mode konfirmasi
     }, 3000);
   };
 
+  const confirmRoyalWinner = async () => {
+      if(!pendingRoyal) return;
+      
+      // 1. Simpan ke Database (Royal Winners History)
+      try {
+        await addDoc(collection(db, "royal_winners"), {
+          rank: pendingRoyal.winner.rank,
+          title: pendingRoyal.winner.title,
+          name: pendingRoyal.winner.name,
+          company: pendingRoyal.winner.company,
+          timestamp: serverTimestamp()
+        });
+        // Note: setRoyalStep tidak perlu manual update di sini, 
+        // karena onSnapshot akan mendeteksi penambahan data dan mengupdate royalStep otomatis.
+      } catch (error) {
+        console.error("Error saving royal winner:", error);
+        alert("Gagal menyimpan data Royal ke database. Periksa koneksi internet.");
+        return;
+      }
+
+      // 2. Update UI
+      setRevealedRoyalWinner(pendingRoyal.winner);
+      setConfettiParticles(generateConfetti(100));
+      setPendingRoyal(null); // Clear pending
+  };
+
+  const retryRoyal = () => {
+      setPendingRoyal(null);
+      setRollingName("Ready?");
+  };
+
+  // --- LOGIC ACTIONS: DOORPRIZE ---
   const handleDoorprizeSpin = async () => {
+    // 1. Validasi
     const availablePrizes = prizes.filter(p => p.stock > 0);
     if (isSpinning || availablePrizes.length === 0 || participants.length === 0) {
       if(participants.length === 0) alert("Data peserta kosong!");
@@ -241,106 +373,213 @@ export default function Home() {
     
     setIsSpinning(true);
     setWinner(null);
+    setPendingDoorprize(null);
     setConfettiParticles([]); 
 
+    // 2. Animasi Rolling
     spinIntervalRef.current = setInterval(() => {
       setRollingName(participants[Math.floor(Math.random() * participants.length)].name);
-    }, 60); 
+    }, 50); 
 
+    // 3. Tentukan Pemenang & Hadiah SECARA ACAK
     setTimeout(async () => {
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
       
-      const finalWinnerName = participants[Math.floor(Math.random() * participants.length)].name;
-      setRollingName(finalWinnerName);
-      
+      const finalWinner = participants[Math.floor(Math.random() * participants.length)];
       const randomPrizeIndex = Math.floor(Math.random() * availablePrizes.length);
       const selectedPrize = availablePrizes[randomPrizeIndex];
 
-      setTimeout(async () => {
-        setIsSpinning(false);
-        setWinner({ name: finalWinnerName, prize: selectedPrize });
-        setConfettiParticles(generateConfetti());
-        
-        try {
-          const prizeRef = doc(db, "prizes", selectedPrize.id);
-          await updateDoc(prizeRef, {
-            stock: selectedPrize.stock - 1
-          });
+      setRollingName(finalWinner.name);
+      setIsSpinning(false);
 
-          await addDoc(collection(db, "doorprize_winners"), {
-            name: finalWinnerName,
-            prizeName: selectedPrize.name,
-            prizeImage: selectedPrize.image_url || "",
-            timestamp: serverTimestamp()
-          });
-
-        } catch (error) {
-          console.error("Error saving winner:", error);
-        }
-
-      }, 500);
+      // 4. Masuk Mode Konfirmasi
+      setPendingDoorprize({ winner: finalWinner, prize: selectedPrize });
     }, 4000); 
   };
 
-  // --- LOGIC MENENTUKAN LIST MODAL (PESERTA vs ROYAL) ---
+  const confirmDoorprizeWinner = async () => {
+      if (!pendingDoorprize) return;
+
+      const { winner: winParticipant, prize } = pendingDoorprize;
+
+      // 1. Simpan ke State Utama (Tampil Pemenang)
+      setWinner({ name: winParticipant.name, prize: prize });
+      setConfettiParticles(generateConfetti(100));
+      
+      // 2. Update Database
+      try {
+          const prizeRef = doc(db, "prizes", prize.id);
+          // Update stok hadiah
+          await updateDoc(prizeRef, {
+            stock: prize.stock - 1
+          });
+
+          // Simpan riwayat pemenang
+          await addDoc(collection(db, "doorprize_winners"), {
+            name: winParticipant.name,
+            prizeName: prize.name,
+            prizeImage: prize.image_url || "",
+            timestamp: serverTimestamp()
+          });
+      } catch (error) {
+          console.error("Error saving winner:", error);
+          alert("Gagal menyimpan ke database, cek koneksi internet.");
+      }
+
+      setPendingDoorprize(null); // Clear pending
+  };
+
+  const retryDoorprize = () => {
+      setPendingDoorprize(null);
+      setRollingName("Ready?");
+      setWinner(null);
+  };
+
   const modalData = view === "royal" ? royalCandidates : participants;
   const modalTitle = view === "royal" ? "Kandidat Royal Top 6" : "Peserta Doorprize";
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
-          <p className="text-slate-500 font-medium">Memuat Data Acara...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-900/40 via-slate-950 to-slate-950"></div>
+        <div className="relative z-10 flex flex-col items-center gap-6">
+           <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+           <p className="text-blue-200/70 font-mono tracking-widest text-sm animate-pulse">SYSTEM INITIALIZING...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <main className="min-h-screen relative flex flex-col items-center py-6 md:py-10 overflow-hidden font-sans text-slate-800 bg-slate-50">
+    <main className="min-h-screen relative flex flex-col items-center py-6 md:py-10 overflow-hidden font-sans text-slate-100 bg-slate-950 selection:bg-blue-500 selection:text-white">
       
-      {/* BACKGROUND */}
+      {/* --- DYNAMIC BACKGROUND SYSTEM --- */}
       <div className="fixed inset-0 pointer-events-none z-0">
-        <motion.div animate={{ x: [-30, 30, -30], y: [-20, 20, -20] }} transition={{ duration: 10, repeat: Infinity }} className="absolute top-[-10%] left-[-10%] w-[250px] md:w-[500px] h-[250px] md:h-[500px] bg-blue-300/30 rounded-full blur-[80px] md:blur-[100px]" />
-        <motion.div animate={{ x: [30, -30, 30], y: [20, -20, 20] }} transition={{ duration: 12, repeat: Infinity }} className="absolute bottom-[-10%] right-[-10%] w-[300px] md:w-[600px] h-[300px] md:h-[600px] bg-cyan-300/30 rounded-full blur-[100px] md:blur-[120px]" />
-        <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px]"></div>
+        <div className="absolute inset-0 bg-slate-950"></div>
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
+        <motion.div animate={{ x: [-100, 100, -100], y: [-50, 50, -50], opacity: [0.3, 0.6, 0.3] }} transition={{ duration: 15, repeat: Infinity, ease: "linear" }} className="absolute top-0 left-0 w-[500px] h-[500px] bg-purple-900/40 rounded-full blur-[120px]" />
+        <motion.div animate={{ x: [100, -100, 100], y: [50, -50, 50], opacity: [0.3, 0.6, 0.3] }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }} className="absolute bottom-0 right-0 w-[600px] h-[600px] bg-blue-900/30 rounded-full blur-[140px]" />
       </div>
 
-      {/* --- MODAL DAFTAR PESERTA (DINAMIS SESUAI TAB) --- */}
+      {/* --- MODAL PASSCODE --- */}
+      <AnimatePresence>
+        {passcodeModal && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
+                <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-slate-900 border border-white/10 p-8 rounded-3xl max-w-md w-full text-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-purple-500/10"></div>
+                    <div className="relative z-10">
+                        <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6 border border-white/10">
+                            <Lock className="text-white" size={24} />
+                        </div>
+                        <h3 className="text-2xl font-bold text-white mb-2">Restricted Access</h3>
+                        <p className="text-slate-400 mb-6 text-sm">Masukkan passcode untuk mengakses halaman {passcodeModal}.</p>
+                        
+                        <input 
+                            type="password" 
+                            value={passcodeInput}
+                            onChange={(e) => setPasscodeInput(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl p-4 text-center text-white text-lg tracking-[0.5em] mb-4 focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                            placeholder="••••••"
+                            autoFocus
+                        />
+                        
+                        <div className="flex gap-3">
+                            <button onClick={() => setPasscodeModal(null)} className="flex-1 py-3 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 font-bold transition-colors">Batal</button>
+                            <button onClick={submitPasscode} className="flex-1 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-500 font-bold transition-colors shadow-lg shadow-blue-500/20">Buka</button>
+                        </div>
+                    </div>
+                </motion.div>
+            </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- MODAL KONFIRMASI (DOORPRIZE & ROYAL) --- */}
+      <AnimatePresence>
+        {(pendingDoorprize || pendingRoyal) && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
+                <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-slate-900 border-2 border-yellow-500/50 p-8 rounded-[2rem] max-w-lg w-full text-center relative overflow-hidden shadow-[0_0_50px_rgba(234,179,8,0.2)]">
+                    <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10"></div>
+                    <div className="relative z-10">
+                        <div className="text-yellow-400 font-bold tracking-widest uppercase mb-4 animate-pulse">Konfirmasi Hasil</div>
+                        
+                        {pendingDoorprize && (
+                            <>
+                                <h2 className="text-4xl font-black text-white mb-2">{pendingDoorprize.winner.name}</h2>
+                                <p className="text-slate-400 mb-6">Mendapatkan: <span className="text-cyan-400 font-bold">{pendingDoorprize.prize.name}</span></p>
+                                <div className="p-4 bg-slate-950/50 rounded-xl mb-8 border border-white/5">
+                                    <p className="text-xs text-slate-500 mb-2">Preview Hadiah</p>
+                                    {pendingDoorprize.prize.image_url ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={pendingDoorprize.prize.image_url} alt="" className="h-32 mx-auto rounded-lg object-contain" />
+                                    ) : (
+                                        <Gift className="mx-auto text-slate-600" size={48} />
+                                    )}
+                                </div>
+                                <div className="flex gap-4">
+                                    <button onClick={retryDoorprize} className="flex-1 py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2"><RotateCcw size={18}/> Spin Ulang</button>
+                                    <button onClick={confirmDoorprizeWinner} className="flex-1 py-4 rounded-xl bg-yellow-500 text-slate-900 hover:bg-yellow-400 font-bold flex items-center justify-center gap-2 shadow-lg"><Save size={18}/> SAH & SIMPAN</button>
+                                </div>
+                            </>
+                        )}
+
+                        {pendingRoyal && (
+                            <>
+                                <div className="w-20 h-20 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-yellow-500/50">
+                                    <Crown className="text-yellow-400" size={32} />
+                                </div>
+                                <h3 className="text-xl text-yellow-200 mb-2">Rank #{pendingRoyal.winner.rank}</h3>
+                                <h2 className="text-4xl font-black text-white mb-2">{pendingRoyal.winner.name}</h2>
+                                <p className="text-slate-400 mb-8">{pendingRoyal.winner.company}</p>
+                                
+                                <div className="flex gap-4">
+                                    <button onClick={retryRoyal} className="flex-1 py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2"><RotateCcw size={18}/> Batal</button>
+                                    <button onClick={confirmRoyalWinner} className="flex-1 py-4 rounded-xl bg-yellow-500 text-slate-900 hover:bg-yellow-400 font-bold flex items-center justify-center gap-2 shadow-lg"><Save size={18}/> SAH & REVEAL</button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </motion.div>
+            </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- MODAL DAFTAR PESERTA (GLASS UI) --- */}
       <AnimatePresence>
         {showParticipantModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-white rounded-2xl md:rounded-3xl w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl overflow-hidden border border-white/50">
-              <div className="p-4 md:p-6 border-b flex justify-between items-center bg-slate-50">
-                <h3 className="text-lg md:text-xl font-bold text-slate-800 flex items-center gap-2"><List size={20} /> {modalTitle}</h3>
-                <button onClick={() => setShowParticipantModal(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X size={20} /></button>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+            <motion.div initial={{ scale: 0.9, y: 30 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 30 }} className="bg-slate-900/80 rounded-3xl w-full max-w-3xl h-[85vh] flex flex-col border border-white/10 shadow-[0_0_50px_rgba(59,130,246,0.3)] overflow-hidden relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-purple-500/10 pointer-events-none"></div>
+              
+              <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5 relative z-10">
+                <h3 className="text-xl font-bold text-white flex items-center gap-3"><List className="text-blue-400" /> {modalTitle}</h3>
+                <button onClick={() => setShowParticipantModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400 hover:text-white"><X size={20} /></button>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
+              
+              <div className="flex-1 overflow-y-auto p-6 custom-scrollbar relative z-10">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="text-sm text-slate-500 border-b border-slate-200 bg-slate-50/50">
-                      <th className="py-2 px-3 md:py-3 md:px-4 rounded-tl-lg">No</th>
-                      <th className="py-2 px-3 md:py-3 md:px-4">Nama</th>
-                      {view === "royal" && <th className="py-2 px-3 md:py-3 md:px-4">Perusahaan</th>}
-                      <th className="py-2 px-3 md:py-3 md:px-4 text-center rounded-tr-lg">Status</th>
+                    <tr className="text-xs text-slate-400 uppercase tracking-wider border-b border-white/10">
+                      <th className="py-4 px-4 font-semibold">No</th>
+                      <th className="py-4 px-4 font-semibold">Nama Kandidat</th>
+                      {view === "royal" && <th className="py-4 px-4 font-semibold">Instansi/Perusahaan</th>}
+                      <th className="py-4 px-4 text-center font-semibold">Status</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="text-sm">
                     {modalData.map((p, i) => (
-                      <tr key={p.id} className="hover:bg-slate-50 border-b border-slate-100 last:border-0 text-sm md:text-base">
-                        <td className="py-2 px-3 md:py-3 md:px-4 text-slate-400 font-mono">{i + 1}</td>
-                        <td className="py-2 px-3 md:py-3 md:px-4 font-medium text-slate-700">{p.name}</td>
+                      <tr key={p.id} className="hover:bg-white/5 border-b border-white/5 last:border-0 transition-colors group">
+                        <td className="py-3 px-4 text-slate-500 font-mono group-hover:text-blue-400 transition-colors">{i + 1}</td>
+                        <td className="py-3 px-4 font-medium text-slate-200 group-hover:text-white">{p.name}</td>
                         {view === "royal" && (
-                            <td className="py-2 px-3 md:py-3 md:px-4 text-slate-600">{(p as RoyalCandidate).company}</td>
+                            <td className="py-3 px-4 text-slate-400">{(p as RoyalCandidate).company}</td>
                         )}
-                        <td className="py-2 px-3 md:py-3 md:px-4 text-center">
-                          <span className="inline-block px-2 py-0.5 rounded-full text-[10px] md:text-xs font-bold bg-green-100 text-green-600 border border-green-200">Ready</span>
+                        <td className="py-3 px-4 text-center">
+                          <span className="inline-block px-2 py-1 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">ACTIVE</span>
                         </td>
                       </tr>
                     ))}
                     {modalData.length === 0 && (
-                        <tr><td colSpan={view === "royal" ? 4 : 3} className="text-center py-8 text-slate-400">Belum ada data</td></tr>
+                        <tr><td colSpan={view === "royal" ? 4 : 3} className="text-center py-12 text-slate-500">Database Kosong</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -350,199 +589,283 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      <div className="w-full max-w-7xl px-4 z-10 relative">
+      <div className="w-full max-w-[1400px] px-4 md:px-8 z-10 relative">
         
-        {/* --- NAVBAR --- */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-6 md:mb-8 gap-4 md:gap-0">
+        {/* --- NAVIGATION --- */}
+        <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div className="flex items-center w-full md:w-auto">
             {view !== "menu" && (
-              <motion.button initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} onClick={() => { setView("menu"); resetAll(); }} className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/80 backdrop-blur-md border border-white/60 shadow-sm text-slate-600 hover:text-blue-600 hover:shadow-md transition-all font-semibold text-sm md:text-base group">
-                <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" /> <span className="hidden sm:inline">Kembali</span>
+              <motion.button 
+                initial={{ opacity: 0, x: -20 }} 
+                animate={{ opacity: 1, x: 0 }} 
+                onClick={() => { setView("menu"); resetAll(); }} 
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-800/50 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-all group backdrop-blur-sm"
+              >
+                <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" /> 
+                <span className="font-medium text-sm">Kembali ke Menu</span>
               </motion.button>
             )}
           </div>
-          <div className="flex gap-2 w-full md:w-auto justify-end">
-            {/* Tombol List Data Hanya muncul jika bukan Menu */}
+          <div className="flex gap-3 w-full md:w-auto justify-end">
             {view !== "menu" && (
-                <button onClick={() => setShowParticipantModal(true)} className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/80 backdrop-blur-md border border-white/60 shadow-sm text-slate-600 hover:text-blue-600 hover:shadow-md transition-all font-semibold text-sm md:text-base">
-                <List size={18} /> <span className="hidden sm:inline">List Data ({modalData.length})</span>
+                <button 
+                  onClick={() => setShowParticipantModal(true)} 
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-800/50 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-all backdrop-blur-sm font-medium text-sm"
+                >
+                  <List size={18} /> <span>Database ({modalData.length})</span>
                 </button>
             )}
-            {/* Tombol Settings Dihapus */}
           </div>
         </div>
 
         <AnimatePresence mode="wait">
           
-          {/* VIEW: MENU UTAMA */}
+          {/* VIEW: MAIN MENU */}
           {view === "menu" && (
-            <motion.div key="menu" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.05 }} transition={{ duration: 0.3 }} className="flex flex-col items-center gap-8 md:gap-10">
-              <div className="text-center mt-4 md:mt-10">
-                <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}>
-                    <h1 className="text-4xl md:text-6xl lg:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-slate-800 via-blue-700 to-cyan-600 drop-shadow-sm leading-tight tracking-tight">GATHERING 2025</h1>
-                    <p className="text-lg md:text-xl text-slate-500 mt-2 font-medium tracking-widest uppercase">Appreciation Night</p>
+            <motion.div key="menu" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.05 }} transition={{ duration: 0.4 }} className="flex flex-col items-center gap-12 mt-4 md:mt-10">
+              
+              <div className="text-center relative">
+                <div className="absolute -inset-10 bg-blue-500/20 blur-3xl rounded-full"></div>
+                <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="relative">
+                    <h1 className="text-5xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-200 to-slate-400 drop-shadow-[0_0_30px_rgba(255,255,255,0.3)] tracking-tighter">GATHERING 2025</h1>
+                    <div className="flex items-center justify-center gap-4 mt-4">
+                      <div className="h-px w-12 bg-blue-500/50"></div>
+                      <p className="text-lg md:text-2xl text-blue-300 font-light tracking-[0.3em] uppercase">Appreciation Night</p>
+                      <div className="h-px w-12 bg-blue-500/50"></div>
+                    </div>
                 </motion.div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 w-full max-w-4xl">
-                <button onClick={() => setView("royal")} className="h-48 md:h-64 rounded-3xl bg-gradient-to-br from-white/90 to-blue-50/90 backdrop-blur-xl border border-white shadow-xl hover:-translate-y-2 hover:shadow-2xl hover:border-blue-200 transition-all duration-300 p-6 md:p-8 text-left relative overflow-hidden group">
-                   <div className="absolute right-[-20px] top-[-20px] w-40 h-40 bg-blue-400/10 rounded-full blur-2xl group-hover:bg-blue-400/20 transition-all"></div>
-                   <Trophy className="absolute -right-4 -top-4 text-blue-100 group-hover:text-blue-200 transition-colors w-28 h-28 md:w-36 md:h-36" />
-                   <h2 className="text-2xl md:text-3xl font-bold text-slate-800 relative z-10 group-hover:text-blue-700 transition-colors">Royal Top 6</h2>
-                   <p className="text-sm md:text-base text-slate-500 relative z-10 mt-1">Reveal Peringkat Tertinggi</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 w-full max-w-5xl px-4">
+                
+                {/* CARD 1: ROYAL */}
+                <button onClick={() => handleAccessRequest("royal")} className="group relative h-64 md:h-80 rounded-[2rem] overflow-hidden border border-white/10 bg-slate-900/40 backdrop-blur-sm transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_0_50px_rgba(234,179,8,0.2)] text-left">
+                   <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 via-transparent to-transparent opacity-50 group-hover:opacity-100 transition-opacity"></div>
+                   <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
+                   
+                   <div className="relative z-10 h-full p-8 md:p-10 flex flex-col justify-end">
+                      <Trophy className="absolute top-8 right-8 text-yellow-500/20 w-32 h-32 md:w-48 md:h-48 group-hover:text-yellow-500/40 group-hover:scale-110 group-hover:rotate-6 transition-all duration-500" />
+                      <div className="space-y-2">
+                          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isRoyalCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-yellow-500/20 border-yellow-500/30 text-yellow-300'}`}>
+                             {isRoyalCompleted ? <><Sparkles size={12}/> COMPLETED</> : (config.royalStatus === 'closed' ? <><Lock size={12}/> Locked</> : <><Sparkles size={12}/> Awards</>)}
+                          </div>
+                          <h2 className="text-3xl md:text-5xl font-bold text-white group-hover:text-yellow-200 transition-colors">Royal Top 6</h2>
+                          <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-base md:text-lg max-w-sm">Pengungkapan eksklusif peringkat tertinggi tahun ini.</p>
+                      </div>
+                   </div>
                 </button>
-                <button onClick={() => setView("doorprize")} className="h-48 md:h-64 rounded-3xl bg-gradient-to-br from-white/90 to-cyan-50/90 backdrop-blur-xl border border-white shadow-xl hover:-translate-y-2 hover:shadow-2xl hover:border-cyan-200 transition-all duration-300 p-6 md:p-8 text-left relative overflow-hidden group">
-                   <div className="absolute right-[-20px] top-[-20px] w-40 h-40 bg-cyan-400/10 rounded-full blur-2xl group-hover:bg-cyan-400/20 transition-all"></div>
-                   <Gift className="absolute -right-4 -top-4 text-cyan-100 group-hover:text-cyan-200 transition-colors w-28 h-28 md:w-36 md:h-36" />
-                   <h2 className="text-2xl md:text-3xl font-bold text-slate-800 relative z-10 group-hover:text-cyan-700 transition-colors">Doorprize</h2>
-                   <p className="text-sm md:text-base text-slate-500 relative z-10 mt-1">Undian Berhadiah</p>
+
+                {/* CARD 2: DOORPRIZE */}
+                <button onClick={() => handleAccessRequest("doorprize")} className="group relative h-64 md:h-80 rounded-[2rem] overflow-hidden border border-white/10 bg-slate-900/40 backdrop-blur-sm transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_0_50px_rgba(6,182,212,0.2)] text-left">
+                   <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent opacity-50 group-hover:opacity-100 transition-opacity"></div>
+                   <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
+
+                   <div className="relative z-10 h-full p-8 md:p-10 flex flex-col justify-end">
+                      <Gift className="absolute top-8 right-8 text-cyan-500/20 w-32 h-32 md:w-48 md:h-48 group-hover:text-cyan-500/40 group-hover:scale-110 group-hover:-rotate-6 transition-all duration-500" />
+                      <div className="space-y-2">
+                          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isDoorprizeCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-cyan-500/20 border-cyan-500/30 text-cyan-300'}`}>
+                             {isDoorprizeCompleted ? <><Zap size={12}/> SOLD OUT</> : (config.doorprizeStatus === 'closed' ? <><Lock size={12}/> Locked</> : <><Zap size={12}/> Lucky Draw</>)}
+                          </div>
+                          <h2 className="text-3xl md:text-5xl font-bold text-white group-hover:text-cyan-200 transition-colors">Doorprize</h2>
+                          <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-base md:text-lg max-w-sm">Putaran keberuntungan berhadiah menarik untuk semua.</p>
+                      </div>
+                   </div>
                 </button>
+
               </div>
             </motion.div>
           )}
 
           {/* VIEW: ROYAL REVEAL */}
           {view === "royal" && (
-            <motion.div key="royal" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center w-full max-w-5xl mx-auto">
+            <motion.div key="royal" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center w-full max-w-6xl mx-auto">
               
-              {/* --- COUNTDOWN ROYAL --- */}
-              <CountdownTimer targetDate={config.royalStart} title="Sesi Royal Akan Dimulai Dalam" />
+              <CountdownTimer targetDate={config.royalStart} title="Waktu Menuju Royal Reveal" theme="gold" />
 
-              {/* HANYA TAMPIL JIKA SUDAH MULAI */}
-              {isRoyalOpen && (
-                <>
-                <div className="w-full min-h-[350px] md:min-h-[450px] mb-8 md:mb-12 flex flex-col items-center justify-center px-2 perspective-1000">
-                    
-                    {/* 1. STATE: BELUM REVEAL */}
-                    {!isRoyalSpinning && !revealedRoyalWinner && royalStep < mergedRoyalWinners.length && (
-                        <div className="bg-white/60 backdrop-blur-md rounded-3xl md:rounded-[3rem] p-8 md:p-12 border-4 border-dashed border-slate-300 text-center w-full max-w-2xl hover:border-blue-400 transition-all shadow-lg hover:shadow-blue-100">
-                        <Search className="mx-auto text-slate-300 mb-4 w-12 h-12 md:w-16 md:h-16 animate-bounce" />
-                        <h3 className="text-xl md:text-3xl font-bold text-slate-700 mb-2">Siapakah Rank #{mergedRoyalWinners[royalStep].rank}?</h3>
-                        <p className="text-slate-500 mb-6">Klik tombol di bawah untuk mengungkap pemenang.</p>
-                        
-                        <TimeDependentButton targetDate={config.royalStart} onClick={handleRoyalReveal} text="REVEAL SEKARANG" icon={<Zap size={18} className="inline mr-2" fill="currentColor" />} />
-                        </div>
-                    )}
+              <div className="w-full min-h-[400px] mb-12 flex flex-col items-center justify-center relative perspective-1000">
+                  
+                  {/* 1. STATE: BELUM REVEAL */}
+                  {!isRoyalSpinning && !revealedRoyalWinner && !pendingRoyal && royalStep < mergedRoyalWinners.length && (
+                      <div className="bg-slate-900/50 backdrop-blur-xl rounded-[2.5rem] p-10 md:p-16 border border-white/10 text-center w-full max-w-3xl hover:border-yellow-500/50 transition-all shadow-2xl relative overflow-hidden group">
+                          <div className="absolute inset-0 bg-gradient-to-b from-yellow-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                          
+                          <div className="relative z-10">
+                           <div className="w-24 h-24 mx-auto mb-8 bg-slate-800 rounded-full flex items-center justify-center border border-white/10 group-hover:scale-110 transition-transform shadow-[0_0_30px_rgba(0,0,0,0.5)]">
+                               <Search className="text-yellow-500 w-10 h-10 animate-pulse" />
+                           </div>
+                           <h3 className="text-2xl md:text-5xl font-bold text-white mb-4">Siapakah Rank <span className="text-yellow-400">#{mergedRoyalWinners[royalStep].rank}</span>?</h3>
+                           <p className="text-slate-400 text-lg mb-8 max-w-lg mx-auto">Sistem telah mengunci data kandidat. Klik tombol di bawah untuk mengungkap identitas pemenang.</p>
+                           
+                           <TimeDependentButton 
+                             targetDate={config.royalStart} 
+                             onClick={handleRoyalReveal} 
+                             text="UNGKAP PEMENANG" 
+                             icon={<Sparkles size={20} className="inline mr-2" />} 
+                             theme="gold"
+                           />
+                          </div>
+                      </div>
+                  )}
 
-                    {/* 2. STATE: SPINNING */}
-                    {isRoyalSpinning && (
-                        <div className="bg-slate-900 rounded-3xl md:rounded-[3rem] p-8 md:p-12 text-center w-full max-w-2xl shadow-2xl relative overflow-hidden min-h-[250px] md:h-[300px] flex flex-col justify-center border border-cyan-500/30 ring-4 ring-cyan-500/20">
-                        <motion.div animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: 1, repeat: Infinity }} className="absolute inset-0 bg-gradient-to-t from-cyan-900/20 to-transparent" />
-                        <p className="text-cyan-400 font-bold tracking-[0.2em] md:tracking-[0.3em] mb-4 animate-pulse text-xs md:text-base relative z-10">MEMILIH KANDIDAT...</p>
-                        <h2 className="text-3xl md:text-5xl font-mono font-bold text-white blur-[1px] animate-pulse break-words relative z-10">{rollingName}</h2>
-                        </div>
-                    )}
+                  {/* 2. STATE: SPINNING / PENDING */}
+                  {(isRoyalSpinning || pendingRoyal) && (
+                      <div className="w-full max-w-4xl h-[400px] flex flex-col items-center justify-center relative">
+                          <div className="absolute inset-0 bg-yellow-500/5 blur-[100px] rounded-full animate-pulse"></div>
+                          {isRoyalSpinning ? (
+                                <div className="text-yellow-500 font-mono text-sm tracking-[0.5em] mb-6 animate-pulse uppercase">Searching Database...</div>
+                          ) : (
+                                <div className="text-green-400 font-mono text-sm tracking-[0.5em] mb-6 uppercase">Winner Found!</div>
+                          )}
+                          <h2 className="text-5xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 blur-[2px] animate-pulse text-center leading-tight">
+                              {rollingName}
+                          </h2>
+                      </div>
+                  )}
 
-                    {/* 3. STATE: REVEALED */}
-                    {revealedRoyalWinner && (
-                        <div className="relative w-full max-w-3xl flex justify-center">
-                            <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] bg-gradient-to-r from-transparent via-yellow-200/40 to-transparent z-0 pointer-events-none" />
-                            <motion.div 
-                            initial={{ scale: 0.8, y: 50, opacity: 0 }} 
-                            animate={{ scale: 1, y: 0, opacity: 1 }}
-                            whileInView={{ y: [0, -10, 0] }}
-                            transition={{ scale: { type: "spring", bounce: 0.5 }, y: { duration: 4, repeat: Infinity, ease: "easeInOut", delay: 0.5 } }}
-                            className="bg-gradient-to-br from-yellow-50 to-amber-50 rounded-3xl md:rounded-[3rem] p-6 md:p-10 border-4 border-yellow-200 shadow-2xl relative overflow-hidden z-10 w-full"
-                            >
-                                <div className="absolute inset-0 pointer-events-none">{confettiParticles.map((p,i) => <div key={i} className={`absolute w-2 h-2 md:w-3 md:h-3 ${p.color}`} style={{left: p.x + (typeof window !== 'undefined' ? window.innerWidth/2 : 300), top: p.y + 200}} />)}</div>
-                                <div className="flex flex-col md:flex-row items-center gap-6 md:gap-8 relative z-10 text-center md:text-left">
-                                <div className="relative shrink-0">
-                                    <motion.div animate={{ rotate: [0, 10, -10, 0] }} transition={{ duration: 5, repeat: Infinity }}>
-                                        <Medal className="text-yellow-500 w-32 h-32 md:w-40 md:h-40 drop-shadow-lg" />
-                                    </motion.div>
-                                    <span className="absolute inset-0 flex items-center justify-center text-4xl md:text-5xl font-black text-white pt-2 drop-shadow-md">#{revealedRoyalWinner.rank}</span>
-                                </div>
-                                <div className="w-full">
-                                    <div className="px-4 py-1.5 bg-yellow-200 text-yellow-800 rounded-full text-xs md:text-sm font-bold inline-block mb-3 shadow-sm uppercase tracking-wide">{revealedRoyalWinner.title}</div>
-                                    <h1 className="text-3xl md:text-5xl font-black text-slate-800 mb-2 leading-tight">{revealedRoyalWinner.name}</h1>
-                                    <p className="text-lg md:text-2xl text-slate-500 font-medium mb-6">{revealedRoyalWinner.company}</p>
-                                    <div className="h-px w-full bg-yellow-200 mb-6"></div>
-                                    {royalStep < mergedRoyalWinners.length ? (
-                                        <button onClick={handleRoyalReveal} className="w-full md:w-auto px-8 py-3 bg-slate-800 text-white rounded-full font-bold flex items-center justify-center gap-2 hover:bg-slate-900 hover:scale-105 transition-all shadow-lg">
-                                        Lanjut Rank #{mergedRoyalWinners[royalStep].rank} <ChevronRight size={18}/>
-                                        </button>
-                                    ) : (
-                                        <button onClick={() => setRevealedRoyalWinner(null)} className="w-full md:w-auto px-6 py-3 bg-green-600 text-white rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2">
-                                        <PartyPopper size={20} /> SELESAI & LIHAT SEMUA
-                                        </button>
-                                    )}
-                                </div>
-                                </div>
-                            </motion.div>
-                        </div>
-                    )}
+                  {/* 3. STATE: REVEALED */}
+                  {revealedRoyalWinner && (
+                      <div className="relative w-full max-w-4xl">
+                          <div className="absolute inset-0 pointer-events-none z-50">
+                              {confettiParticles.map((p,i) => (
+                                  <motion.div 
+                                      key={i} 
+                                      initial={{ y: p.y, x: p.x, opacity: 1 }}
+                                      animate={{ y: p.y + 800, x: p.x + p.offsetX, rotate: 360 }}
+                                      transition={{ duration: p.duration, ease: "easeOut" }}
+                                      className={`absolute rounded-full ${p.color}`} 
+                                      style={{ width: p.size, height: p.size, left: '50%' }} 
+                                  />
+                              ))}
+                          </div>
 
-                    {/* 4. STATE: ALL COMPLETED */}
-                    {!isRoyalSpinning && !revealedRoyalWinner && royalStep >= mergedRoyalWinners.length && (
-                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-gradient-to-br from-purple-600 to-blue-600 rounded-3xl md:rounded-[3rem] p-8 md:p-12 shadow-2xl text-center w-full max-w-3xl relative overflow-hidden">
-                        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
-                        <div className="relative z-10 text-white">
-                            <Crown className="w-24 h-24 mx-auto mb-6 text-yellow-300 drop-shadow-[0_0_15px_rgba(253,224,71,0.5)]" />
-                            <h2 className="text-4xl md:text-6xl font-black mb-4">HALL OF FAME LENGKAP!</h2>
-                            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                                <button onClick={triggerCelebration} className="px-8 py-4 bg-yellow-400 text-yellow-900 rounded-full font-black text-lg shadow-lg hover:bg-yellow-300 hover:scale-105 transition-transform flex items-center justify-center gap-2"><PartyPopper /> RAYAKAN LAGI</button>
-                                <button onClick={resetAll} className="px-8 py-4 bg-white/20 backdrop-blur border border-white/30 rounded-full font-bold text-white hover:bg-white/30 transition-colors">RESET DATA</button>
-                            </div>
-                        </div>
-                        </motion.div>
-                    )}
-                </div>
+                          <motion.div 
+                          initial={{ scale: 0.5, opacity: 0, rotateX: 90 }} 
+                          animate={{ scale: 1, opacity: 1, rotateX: 0 }}
+                          transition={{ type: "spring", bounce: 0.4, duration: 1.5 }}
+                          className="bg-gradient-to-br from-slate-900 to-black rounded-[3rem] p-1 border border-yellow-500/50 shadow-[0_0_100px_rgba(234,179,8,0.3)] relative overflow-hidden"
+                          >
+                              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-30 mix-blend-overlay"></div>
+                              <div className="absolute -top-40 -right-40 w-96 h-96 bg-yellow-600/30 rounded-full blur-[80px]"></div>
+                              
+                              <div className="bg-slate-950/80 backdrop-blur-3xl rounded-[2.8rem] p-8 md:p-12 text-center md:text-left flex flex-col md:flex-row items-center gap-10 relative z-10">
+                                  <div className="relative shrink-0">
+                                      <div className="absolute inset-0 bg-yellow-500 blur-[60px] opacity-40 animate-pulse"></div>
+                                      <Medal className="text-yellow-400 w-40 h-40 md:w-56 md:h-56 drop-shadow-2xl relative z-10" strokeWidth={1} />
+                                      <div className="absolute inset-0 flex items-center justify-center z-20 pt-4">
+                                          <span className="text-6xl md:text-8xl font-black text-white drop-shadow-md">#{revealedRoyalWinner.rank}</span>
+                                      </div>
+                                  </div>
 
-                {/* LIST GRID */}
-                <div className="w-full">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-                    {mergedRoyalWinners.slice(0, royalStep).map((w) => (
-                        <motion.div key={w.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white/70 backdrop-blur border border-yellow-100 p-3 md:p-4 rounded-xl md:rounded-2xl flex items-center gap-3 md:gap-4 shadow-sm hover:shadow-md transition-shadow">
-                        <div className="w-10 h-10 md:w-12 md:h-12 bg-yellow-100 rounded-full flex items-center justify-center font-bold text-yellow-600 text-base md:text-lg shrink-0 border border-yellow-200">#{w.rank}</div>
-                        <div className="min-w-0">
-                            <div className="font-bold text-slate-800 truncate">{w.name}</div>
-                            <div className="text-xs text-slate-500 truncate">{w.title}</div>
-                        </div>
-                        </motion.div>
-                    ))}
-                    </div>
-                </div>
-                </>
-              )}
+                                  <div className="flex-1 min-w-0">
+                                      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }}>
+                                          <div className="inline-block px-4 py-1 bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 rounded-full text-sm font-bold uppercase tracking-wider mb-4">
+                                              {revealedRoyalWinner.title}
+                                          </div>
+                                          <h1 className="text-4xl md:text-6xl lg:text-7xl font-black text-white leading-[0.9] mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-yellow-100 to-yellow-500">
+                                              {revealedRoyalWinner.name}
+                                          </h1>
+                                          <p className="text-xl md:text-3xl text-slate-400 font-light tracking-wide mb-8">{revealedRoyalWinner.company}</p>
+                                          
+                                          <div className="h-px w-full bg-gradient-to-r from-yellow-500/50 to-transparent mb-8"></div>
+                                          
+                                          {royalStep < mergedRoyalWinners.length ? (
+                                              <button onClick={handleRoyalReveal} className="w-full md:w-auto px-10 py-4 bg-white text-slate-900 rounded-full font-bold flex items-center justify-center gap-2 hover:bg-yellow-400 hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,255,255,0.3)]">
+                                                  Lanjut ke Rank #{mergedRoyalWinners[royalStep].rank} <ChevronRight size={20}/>
+                                              </button>
+                                          ) : (
+                                              <button onClick={() => setRevealedRoyalWinner(null)} className="w-full md:w-auto px-10 py-4 bg-green-500 text-white rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2">
+                                                  <PartyPopper size={20} /> SELESAI & REKAP
+                                              </button>
+                                          )}
+                                      </motion.div>
+                                  </div>
+                              </div>
+                          </motion.div>
+                      </div>
+                  )}
+
+                  {/* 4. STATE: ALL COMPLETED */}
+                  {!isRoyalSpinning && !revealedRoyalWinner && !pendingRoyal && royalStep >= mergedRoyalWinners.length && (
+                      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-gradient-to-b from-purple-900/50 to-slate-900/80 backdrop-blur-xl border border-purple-500/30 rounded-[3rem] p-10 md:p-16 shadow-2xl text-center w-full max-w-4xl relative overflow-hidden">
+                          <div className="absolute inset-0 pointer-events-none z-0">
+                              {confettiParticles.map((p,i) => (
+                                  <motion.div 
+                                      key={i} 
+                                      initial={{ y: p.y, x: p.x, opacity: 1 }}
+                                      animate={{ y: p.y + 800, x: p.x + p.randomX, rotate: 360 }}
+                                      transition={{ duration: p.randomDuration, ease: "easeOut" }}
+                                      className={`absolute rounded-full ${p.color}`} 
+                                      style={{ width: p.size, height: p.size, left: '50%' }} 
+                                  />
+                              ))}
+                          </div>
+                          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+                          <div className="relative z-10">
+                              <Crown className="w-24 h-24 mx-auto mb-6 text-yellow-400 drop-shadow-[0_0_20px_rgba(234,179,8,0.6)] animate-bounce" />
+                              <h2 className="text-4xl md:text-6xl font-black text-white mb-6">HALL OF FAME LENGKAP!</h2>
+                              <p className="text-slate-300 text-lg mb-10 max-w-2xl mx-auto">Selamat kepada seluruh pemenang Royal Top 6. Prestasi luar biasa untuk pencapaian yang gemilang.</p>
+                              <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                                  <button onClick={triggerCelebration} className="px-8 py-4 bg-purple-600 text-white rounded-full font-bold text-lg shadow-lg hover:bg-purple-500 hover:scale-105 transition-transform flex items-center justify-center gap-2 relative z-20"><PartyPopper /> RAYAKAN</button>
+                              </div>
+                          </div>
+                      </motion.div>
+                  )}
+              </div>
+
+              {/* LIST GRID */}
+              <div className="w-full mt-8">
+                  <h3 className="text-slate-400 text-sm font-bold uppercase tracking-widest mb-6 text-center md:text-left">Daftar Pemenang Royal</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {mergedRoyalWinners.slice(0, royalStep).map((w) => (
+                      <motion.div key={w.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-slate-800/40 backdrop-blur border border-white/5 p-4 rounded-2xl flex items-center gap-4 hover:bg-slate-800/60 hover:border-yellow-500/30 transition-all group">
+                      <div className="w-12 h-12 bg-yellow-500/10 rounded-xl flex items-center justify-center font-black text-yellow-500 text-lg shrink-0 border border-yellow-500/20 group-hover:bg-yellow-500 group-hover:text-slate-900 transition-colors">#{w.rank}</div>
+                      <div className="min-w-0">
+                          <div className="font-bold text-slate-100 truncate group-hover:text-yellow-200">{w.name}</div>
+                          <div className="text-xs text-slate-400 truncate">{w.company}</div>
+                      </div>
+                      </motion.div>
+                  ))}
+                  </div>
+              </div>
             </motion.div>
           )}
 
           {/* VIEW: DOORPRIZE */}
           {view === "doorprize" && (
-            <motion.div key="doorprize" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col lg:flex-row gap-6 md:gap-8 w-full max-w-6xl mx-auto pb-10">
+            <motion.div key="doorprize" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col xl:flex-row gap-8 w-full max-w-[1600px] mx-auto pb-10">
               
-              <div className="w-full lg:w-2/3 order-1 flex flex-col gap-6">
+              <div className="w-full xl:w-2/3 order-1 flex flex-col gap-8">
                  
-                 {/* --- COUNTDOWN DOORPRIZE --- */}
-                 <CountdownTimer targetDate={config.doorprizeStart} title="Doorprize Dimulai Dalam" />
+                 <CountdownTimer targetDate={config.doorprizeStart} title="Waktu Menuju Doorprize" theme="cyan" />
 
-                 {/* HANYA TAMPIL JIKA SUDAH MULAI */}
-                 {isDoorprizeOpen && (
-                 <>
-                 {/* --- 1. DAFTAR HADIAH --- */}
-                 <div className="bg-white/60 backdrop-blur-md rounded-2xl border border-white/50 p-4 shadow-sm">
-                    <h3 className="text-sm font-bold text-slate-500 mb-3 flex items-center gap-2 uppercase tracking-wide">
-                       <PackageOpen size={16} /> Daftar Hadiah Tersedia
+                 {/* --- 1. DAFTAR HADIAH (Modern Grid) --- */}
+                 <div className="bg-slate-900/50 backdrop-blur-md rounded-3xl border border-white/10 p-6">
+                    <h3 className="text-sm font-bold text-cyan-400 mb-6 flex items-center gap-2 uppercase tracking-wide">
+                       <PackageOpen size={18} /> Hadiah
+                       <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-xs ml-auto">{totalItemsRemaining} Item Tersedia</span>
                     </h3>
                     {prizes.length === 0 ? (
-                        <div className="text-center py-4 text-slate-400 text-sm">Tidak ada data hadiah.</div>
+                        <div className="text-center py-8 text-slate-500 font-mono text-sm">DATABASE HADIAH KOSONG</div>
                     ) : (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                            {prizes.map((p) => (
-                             <div key={p.id} className={`bg-white p-2 rounded-xl border border-slate-100 shadow-sm flex flex-col items-center text-center transition-all ${p.stock === 0 ? 'opacity-40 grayscale' : 'hover:scale-105'}`}>
-                                <div className="w-full aspect-square rounded-lg overflow-hidden bg-slate-50 mb-2 relative">
+                             <div key={p.id} className={`group bg-slate-800/40 p-3 rounded-2xl border border-white/5 flex flex-col transition-all relative overflow-hidden ${p.stock === 0 ? 'opacity-30 grayscale' : 'hover:scale-105 hover:bg-slate-800/80 hover:border-cyan-500/30'}`}>
+                                <div className="w-full aspect-[4/3] rounded-xl overflow-hidden bg-slate-950 mb-3 relative">
                                    {p.image_url ? (
-                                       // eslint-disable-next-line @next/next/no-img-element
-                                       <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={p.image_url} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                                    ) : (
-                                       <div className="w-full h-full flex items-center justify-center text-slate-300 bg-slate-100"><Gift size={24}/></div>
+                                        <div className="w-full h-full flex items-center justify-center text-slate-700 bg-slate-900"><Gift size={32}/></div>
                                    )}
                                    {p.stock === 0 && (
-                                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-[10px] text-white font-bold">HABIS</div>
+                                      <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-[10px] text-white font-bold tracking-widest border-2 border-red-500/50 m-2 rounded">HABIS</div>
                                    )}
                                 </div>
-                                <div className="text-[10px] sm:text-xs font-bold text-slate-700 line-clamp-1 w-full" title={p.name}>{p.name}</div>
-                                <div className={`text-[10px] mt-1 font-mono px-2 py-0.5 rounded-full ${p.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                   {p.stock} Unit
+                                <div className="text-xs font-bold text-slate-300 line-clamp-1 group-hover:text-cyan-300 transition-colors" title={p.name}>{p.name}</div>
+                                <div className="flex justify-between items-center mt-2">
+                                    <div className={`text-[10px] font-mono px-2 py-0.5 rounded ${p.stock > 0 ? 'bg-cyan-500/20 text-cyan-400' : 'bg-red-500/20 text-red-400'}`}>
+                                        Qty: {p.stock}
+                                    </div>
                                 </div>
                              </div>
                            ))}
@@ -552,114 +875,131 @@ export default function Home() {
 
                  {/* --- 2. SPIN MACHINE --- */}
                  {!isSpinning && !winner ? (
-                   <div className="bg-white/50 backdrop-blur-xl rounded-[2rem] md:rounded-[3rem] p-6 md:p-10 border-4 border-white shadow-2xl flex flex-col items-center justify-center min-h-[300px]">
-                      
-                      <div className="w-full text-center mb-8">
-                        <h2 className="text-3xl md:text-5xl font-black text-slate-800">RANDOM DOORPRIZE</h2>
-                        <p className="text-slate-500 mt-2">Sistem akan mengacak Peserta & Hadiah sekaligus.</p>
-                      </div>
+                    <div className="bg-gradient-to-br from-slate-900 to-slate-950 rounded-[3rem] p-10 border border-cyan-500/20 shadow-[0_0_60px_rgba(6,182,212,0.1)] flex flex-col items-center justify-center min-h-[350px] relative overflow-hidden">
+                       <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10"></div>
+                       <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }} className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,cyan_360deg)] opacity-5 blur-[100px]"></motion.div>
+                       
+                       <div className="relative z-10 text-center w-full max-w-lg">
+                          <motion.div 
+                            animate={{ y: [0, -15, 0] }} 
+                            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                            className="w-32 h-32 mx-auto mb-8 bg-cyan-950 rounded-full flex items-center justify-center border-4 border-cyan-500/30 shadow-[0_0_30px_rgba(6,182,212,0.4)]"
+                          >
+                             <Zap className="text-cyan-400 w-16 h-16 drop-shadow-[0_0_10px_rgba(6,182,212,0.8)]" />
+                          </motion.div>
+                          
+                          <h2 className="text-4xl md:text-5xl font-black text-white mb-2">RANDOMIZER</h2>
+                          <p className="text-cyan-200/60 mb-8">Algoritma pengacakan peserta dan hadiah siap dijalankan.</p>
 
-                      <motion.div 
-                        animate={{ y: [0, -20, 0] }} 
-                        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                        className="mb-8 relative"
-                      >
-                         <div className="w-32 h-32 md:w-40 md:h-40 bg-gradient-to-br from-blue-500 to-cyan-400 rounded-3xl flex items-center justify-center shadow-2xl rotate-3">
-                            <HelpCircle className="text-white w-16 h-16 md:w-20 md:h-20 opacity-80" />
-                         </div>
-                      </motion.div>
-                      
-                      {/* BUTTON SPIN with Time Check */}
-                      <TimeDependentButton 
-                        targetDate={config.doorprizeStart} 
-                        onClick={handleDoorprizeSpin} 
-                        disabled={totalItemsRemaining === 0 || participants.length === 0}
-                        text="PUTAR ACAK SEKARANG"
-                        icon={<Zap fill="currentColor" />}
-                      />
-                   </div>
-                 ) : isSpinning ? (
-                   <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] md:rounded-[3rem] p-8 md:p-12 border-4 border-blue-100 shadow-2xl min-h-[400px] flex flex-col items-center justify-center text-center">
-                      <p className="text-blue-400 font-bold tracking-widest animate-pulse mb-4 md:mb-8 text-sm md:text-base">MENGACAK PESERTA & HADIAH...</p>
-                      <h2 className="text-4xl md:text-6xl font-black text-slate-800 break-words w-full animate-pulse blur-[1px]">{rollingName}</h2>
-                   </div>
+                          <TimeDependentButton 
+                            targetDate={config.doorprizeStart} 
+                            onClick={handleDoorprizeSpin} 
+                            disabled={totalItemsRemaining === 0 || participants.length === 0}
+                            text="PUTAR ACAK SEKARANG"
+                            icon={<Zap fill="currentColor" size={20} />}
+                            theme="cyan"
+                          />
+                       </div>
+                    </div>
+                 ) : (isSpinning || pendingDoorprize) ? (
+                    <div className="bg-black/40 backdrop-blur-xl rounded-[3rem] p-12 border border-cyan-500/50 shadow-[0_0_100px_rgba(6,182,212,0.2)] min-h-[450px] flex flex-col items-center justify-center text-center relative overflow-hidden">
+                       <div className="absolute inset-0 bg-cyan-500/5 animate-pulse"></div>
+                       {/* Scanning Line */}
+                       <motion.div animate={{ top: ['0%', '100%', '0%'] }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }} className="absolute left-0 w-full h-1 bg-cyan-500/50 blur-sm shadow-[0_0_20px_cyan]"></motion.div>
+                       
+                       <p className="text-cyan-400 font-mono tracking-[0.5em] text-sm mb-8 animate-pulse">SYSTEM PROCESSING...</p>
+                       <h2 className="text-5xl md:text-7xl font-black text-white break-words w-full blur-[1px] animate-pulse">{rollingName}</h2>
+                    </div>
                  ) : (
-                   <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-white/90 backdrop-blur-xl rounded-[2rem] md:rounded-[3rem] p-8 md:p-12 border-4 border-yellow-200 shadow-2xl text-center relative overflow-hidden min-h-[400px] flex flex-col items-center justify-center">
-                      <div className="absolute inset-0 pointer-events-none">{confettiParticles.map((p,i) => <div key={i} className={`absolute w-2 h-2 md:w-3 md:h-3 ${p.color}`} style={{left: p.x + (typeof window !== 'undefined' ? window.innerWidth/2 : 300), top: p.y + 200}} />)}</div>
-                      
-                      <div className="bg-blue-50 px-4 py-2 rounded-full text-blue-600 font-bold text-sm mb-6 inline-flex items-center gap-2">
-                         <Gift size={16} /> Selamat Kepada
-                      </div>
-                      
-                      <h1 className="text-3xl md:text-5xl font-black text-slate-800 mb-6">{winner?.name}</h1>
-                      
-                      <div className="relative group w-full max-w-sm mx-auto mb-8">
-                         <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-2xl rotate-2 opacity-50 blur-lg group-hover:opacity-75 transition-opacity"></div>
-                         <div className="relative bg-white border border-slate-100 rounded-2xl p-4 shadow-lg flex items-center gap-4 text-left">
-                            {winner?.prize.image_url ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={winner?.prize.image_url} alt="Prize" className="w-20 h-20 rounded-lg object-cover bg-slate-100" />
-                            ) : (
-                                <div className="w-20 h-20 rounded-lg bg-blue-50 flex items-center justify-center"><Gift className="text-blue-300"/></div>
-                            )}
-                            <div>
-                               <div className="text-xs text-slate-400 font-bold uppercase mb-1">Mendapatkan Hadiah</div>
-                               <div className="text-lg md:text-xl font-black text-slate-800 leading-tight">{winner?.prize.name}</div>
-                            </div>
-                         </div>
-                      </div>
+                    <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-gradient-to-b from-slate-900 to-black rounded-[3rem] p-12 border-2 border-cyan-400 shadow-[0_0_100px_rgba(6,182,212,0.4)] text-center relative overflow-hidden min-h-[450px] flex flex-col items-center justify-center">
+                       {/* Confetti */}
+                       <div className="absolute inset-0 pointer-events-none z-0">
+                           {confettiParticles.map((p,i) => (
+                             <motion.div 
+                               key={i} 
+                               initial={{ y: p.y, x: p.x, opacity: 1 }}
+                               animate={{ y: p.y + 600, x: p.x + p.randomX * 0.5, rotate: 360 }}
+                               transition={{ duration: p.randomDuration * 1.5, ease: "easeOut" }}
+                               className={`absolute rounded-full ${p.color}`} 
+                               style={{ width: p.size, height: p.size, left: '50%' }} 
+                             />
+                           ))}
+                       </div>
+                       
+                       <div className="relative z-10 w-full max-w-2xl">
+                          <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-cyan-500/20 border border-cyan-500/50 text-cyan-300 font-bold mb-8 shadow-[0_0_20px_rgba(6,182,212,0.3)]">
+                              <Gift size={18} /> SELAMAT KEPADA
+                          </motion.div>
+                          
+                          <motion.h1 initial={{ scale: 0.5 }} animate={{ scale: 1 }} className="text-5xl md:text-7xl font-black text-white mb-10 drop-shadow-lg">{winner?.name}</motion.h1>
+                          
+                          <div className="relative group w-full max-w-md mx-auto mb-10">
+                              <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl rotate-2 opacity-60 blur-xl group-hover:opacity-100 transition-opacity"></div>
+                              <div className="relative bg-slate-900 border border-white/20 rounded-2xl p-6 flex items-center gap-6 text-left">
+                                 {winner?.prize.image_url ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={winner?.prize.image_url} alt="Prize" className="w-80 h-62 rounded-xl object-cover bg-slate-800 border border-white/10" />
+                                 ) : (
+                                        <div className="w-80 h-62 rounded-xl bg-cyan-900/50 flex items-center justify-center"><Gift className="text-cyan-400 w-10 h-10"/></div>
+                                 )}
+                                 <div>
+                                    <div className="text-xs text-cyan-400 font-bold uppercase tracking-wider mb-1">Hadiah Utama</div>
+                                    <div className="text-2xl font-bold text-white leading-tight">{winner?.prize.name}</div>
+                                 </div>
+                              </div>
+                          </div>
 
-                      <div className="flex flex-col sm:flex-row gap-3 md:gap-4 justify-center relative z-10 w-full">
-                        <button onClick={resetAll} className="px-6 py-3 bg-slate-100 rounded-full font-bold text-slate-600 w-full sm:w-auto hover:bg-slate-200 transition-colors">Tutup</button>
-                        <button onClick={() => { resetAll(); handleDoorprizeSpin(); }} className="px-6 py-3 bg-blue-600 rounded-full font-bold text-white shadow-lg w-full sm:w-auto hover:bg-blue-700 transition-colors">Undi Lagi</button>
-                      </div>
-                   </motion.div>
-                 )}
-                 </>
+                          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                             <button onClick={resetAll} className="px-8 py-3 bg-slate-800 rounded-full font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors">Tutup</button>
+                             <button onClick={() => { resetAll(); handleDoorprizeSpin(); }} className="px-8 py-3 bg-cyan-600 rounded-full font-bold text-white shadow-lg shadow-cyan-500/30 hover:bg-cyan-500 hover:scale-105 transition-all">Undi Lagi</button>
+                          </div>
+                       </div>
+                    </motion.div>
                  )}
               </div>
 
               {/* Right Column: History */}
-              {/* HANYA TAMPIL JIKA SUDAH MULAI */}
-              {isDoorprizeOpen && (
-              <div className="w-full lg:w-1/3 flex flex-col h-[500px] lg:h-[700px] order-2">
-                <div className="bg-white/60 backdrop-blur-md rounded-[2rem] border border-white/50 shadow-xl flex-1 flex flex-col overflow-hidden">
-                  <div className="p-4 md:p-6 border-b border-white/50 bg-white/40 flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm md:text-base"><History size={20} /> Riwayat Pemenang</h3>
-                    <div className="text-xs text-slate-500 font-medium">Total: {doorprizeLog.length}</div>
+              <div className="w-full xl:w-1/3 order-2">
+                <div className="bg-slate-900/60 backdrop-blur-md rounded-[2.5rem] border border-white/10 shadow-xl overflow-hidden h-[600px] xl:h-[800px] flex flex-col relative">
+                  <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/5 to-transparent pointer-events-none"></div>
+                  
+                  <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5 relative z-10">
+                    <h3 className="font-bold text-white flex items-center gap-2 text-base"><History className="text-cyan-400" size={20} /> Live Feed Winner</h3>
+                    <div className="bg-cyan-500/20 text-cyan-300 text-xs px-2 py-1 rounded font-mono">TOTAL: {doorprizeLog.length}</div>
                   </div>
-                  <div className="flex-1 overflow-y-auto p-3 md:p-4 custom-scrollbar">
+                  
+                  <div className="flex-1 overflow-y-auto p-4 custom-scrollbar relative z-10">
                       {doorprizeLog.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm">
-                          <Box size={32} className="mb-2 opacity-50" />
-                          <p>Belum ada pemenang</p>
+                        <div className="h-full flex flex-col items-center justify-center text-slate-600 text-sm">
+                          <Box size={40} className="mb-3 opacity-30" />
+                          <p>Menunggu Pemenang...</p>
                         </div>
                       ) : (
-                        <div className="space-y-2 md:space-y-3">
+                        <div className="space-y-3">
+                          <AnimatePresence>
                           {doorprizeLog.map((log) => (
-                            <motion.div key={log.id} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white p-3 rounded-xl shadow-sm border border-slate-100 flex gap-3 items-center">
+                            <motion.div key={log.id} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="bg-slate-800/80 p-3 rounded-2xl border border-white/5 flex gap-3 items-center hover:bg-slate-800 transition-colors group">
                               {log.prizeImage ? (
                                 // eslint-disable-next-line @next/next/no-img-element
-                                <img src={log.prizeImage} alt="" className="w-10 h-10 rounded-lg object-cover bg-slate-50" />
+                                <img src={log.prizeImage} alt="" className="w-16 h-12 rounded-xl object-cover bg-slate-950 border border-white/5" />
                               ) : (
-                                <div className="w-10 h-10 rounded-lg bg-slate-50 flex items-center justify-center"><Gift size={16} className="text-slate-300"/></div>
+                                <div className="w-16 h-12 rounded-xl bg-slate-950 flex items-center justify-center"><Gift size={18} className="text-slate-600"/></div>
                               )}
                               <div className="min-w-0 flex-1">
                                 <div className="flex justify-between items-start">
-                                  <span className="font-bold text-slate-800 text-sm truncate">{log.name}</span>
-                                  <span className="text-[10px] text-slate-400 whitespace-nowrap ml-2">{log.displayTime}</span>
+                                  <span className="font-bold text-slate-200 text-sm truncate group-hover:text-white transition-colors">{log.name}</span>
+                                  <span className="text-[10px] text-slate-500 font-mono ml-2">{log.displayTime}</span>
                                 </div>
-                                <div className="text-xs text-blue-600 font-medium truncate">{log.prizeName}</div>
+                                <div className="text-xs text-cyan-400 font-medium truncate">{log.prizeName}</div>
                               </div>
                             </motion.div>
                           ))}
+                          </AnimatePresence>
                         </div>
                       )}
                   </div>
                 </div>
               </div>
-              )}
-
             </motion.div>
           )}
 
@@ -672,7 +1012,7 @@ export default function Home() {
 // --- SUB COMPONENTS ---
 
 // 1. Countdown Timer Component
-function CountdownTimer({ targetDate, title }: { targetDate: string, title: string }) {
+function CountdownTimer({ targetDate, title, theme = "gold" }: { targetDate: string, title: string, theme?: "gold" | "cyan" }) {
     const [timeLeft, setTimeLeft] = useState<{days: number, hours: number, minutes: number, seconds: number} | null>(null);
 
     useEffect(() => {
@@ -699,42 +1039,46 @@ function CountdownTimer({ targetDate, title }: { targetDate: string, title: stri
         return () => clearInterval(interval);
     }, [targetDate]);
 
-    if (!timeLeft) return null; // Jangan tampilkan jika sudah mulai atau targetDate kosong
+    if (!timeLeft) return null; 
+
+    const boxBorder = theme === "gold" ? "border-yellow-500/20" : "border-cyan-500/20";
 
     return (
-        <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="w-full max-w-2xl mx-auto mb-8 bg-white/40 backdrop-blur-md rounded-2xl border border-white/50 p-4 flex flex-col items-center justify-center text-center">
-             <div className="flex items-center gap-2 text-slate-500 text-xs font-bold uppercase tracking-widest mb-3">
+        <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className={`w-full max-w-2xl mx-auto mb-8 bg-slate-900/60 backdrop-blur-md rounded-2xl border ${boxBorder} p-6 flex flex-col items-center justify-center text-center shadow-lg relative overflow-hidden`}>
+             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent skew-x-12 opacity-20"></div>
+             <div className={`flex items-center gap-2 ${theme === "gold" ? "text-yellow-200" : "text-cyan-200"} text-xs font-bold uppercase tracking-[0.2em] mb-4`}>
                  <Clock size={14} /> {title}
              </div>
-             <div className="flex gap-4 md:gap-8">
-                 <TimeBox val={timeLeft.days} label="Hari" />
-                 <TimeBox val={timeLeft.hours} label="Jam" />
-                 <TimeBox val={timeLeft.minutes} label="Menit" />
-                 <TimeBox val={timeLeft.seconds} label="Detik" />
+             <div className="flex gap-4 md:gap-8 relative z-10">
+                 <TimeBox val={timeLeft.days} label="Hari" theme={theme} />
+                 <TimeBox val={timeLeft.hours} label="Jam" theme={theme} />
+                 <TimeBox val={timeLeft.minutes} label="Menit" theme={theme} />
+                 <TimeBox val={timeLeft.seconds} label="Detik" theme={theme} />
              </div>
         </motion.div>
     );
 }
 
-function TimeBox({ val, label }: { val: number, label: string }) {
+function TimeBox({ val, label, theme }: { val: number, label: string, theme: string }) {
+    const textColor = theme === "gold" ? "text-yellow-500" : "text-cyan-400";
     return (
         <div className="flex flex-col items-center">
-            <div className="w-12 h-12 md:w-16 md:h-16 bg-white rounded-xl shadow-lg flex items-center justify-center text-xl md:text-3xl font-black text-slate-800 border border-slate-100">
+            <div className={`w-14 h-14 md:w-20 md:h-20 bg-slate-950 rounded-2xl flex items-center justify-center text-2xl md:text-4xl font-black ${textColor} border border-white/10 shadow-inner`}>
                 {val < 10 ? `0${val}` : val}
             </div>
-            <span className="text-[10px] md:text-xs text-slate-500 font-bold mt-1 uppercase">{label}</span>
+            <span className="text-[10px] md:text-xs text-slate-500 font-bold mt-2 uppercase tracking-wider">{label}</span>
         </div>
     )
 }
 
 // 2. Button Wrapper that checks Time
-function TimeDependentButton({ targetDate, onClick, disabled, text, icon }: { targetDate: string, onClick: () => void, disabled?: boolean, text: string, icon: React.ReactNode }) {
+function TimeDependentButton({ targetDate, onClick, disabled, text, icon, theme = "gold" }: { targetDate: string, onClick: () => void, disabled?: boolean, text: string, icon: React.ReactNode, theme?: "gold" | "cyan" }) {
     const [isStarted, setIsStarted] = useState(false);
 
     useEffect(() => {
         const checkTime = () => {
             if(!targetDate) {
-                setIsStarted(true); // Jika tidak ada jadwal, anggap mulai
+                setIsStarted(true); 
                 return;
             }
             const now = new Date().getTime();
@@ -748,22 +1092,30 @@ function TimeDependentButton({ targetDate, onClick, disabled, text, icon }: { ta
     }, [targetDate]);
 
     const isLocked = !isStarted;
+    
+    // Style logic
+    let btnClass = "";
+    if (isLocked || disabled) {
+        btnClass = "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed";
+    } else {
+        if (theme === "gold") {
+            btnClass = "bg-gradient-to-r from-yellow-600 to-yellow-400 text-slate-900 border-yellow-300 hover:shadow-[0_0_20px_rgba(234,179,8,0.5)]";
+        } else {
+            btnClass = "bg-gradient-to-r from-cyan-600 to-cyan-400 text-white border-cyan-300 hover:shadow-[0_0_20px_rgba(6,182,212,0.5)]";
+        }
+    }
 
     return (
         <button 
             onClick={onClick} 
             disabled={disabled || isLocked}
-            className={`mt-2 mx-auto px-8 py-4 rounded-full font-bold text-lg shadow-xl transition-all w-full md:w-auto relative overflow-hidden group flex items-center justify-center gap-2
-                ${isLocked 
-                    ? "bg-slate-300 text-slate-500 cursor-not-allowed" 
-                    : (disabled ? "bg-slate-300 text-slate-500 cursor-not-allowed" : "bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:shadow-cyan-200 hover:scale-105")
-                }`}
+            className={`mt-4 mx-auto px-8 py-4 rounded-full font-bold text-lg transition-all w-full md:w-auto relative overflow-hidden group flex items-center justify-center gap-2 border-t border-white/20 shadow-lg active:scale-95 ${btnClass}`}
         >
             {isLocked ? (
-                <> <Calendar size={18} /> MENUNGGU JADWAL</>
+                <> <Calendar size={18} /> EVENT BELUM DIMULAI</>
             ) : (
                 <>
-                  {!disabled && <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 skew-x-12"></div>}
+                  {!disabled && <div className="absolute inset-0 bg-white/30 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 skew-x-12"></div>}
                   {icon} {text}
                 </>
             )}

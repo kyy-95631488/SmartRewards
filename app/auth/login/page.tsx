@@ -329,7 +329,7 @@ export default function LoginPage() {
         </div>
         
         <p className="text-center text-slate-400 text-xs mt-8">
-          © 2025 SmartExhibit System. Protected Area.
+          © 2025 SmartRewards System. Protected Area.
         </p>
       </motion.div>
     </div>

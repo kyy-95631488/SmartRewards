@@ -1,7 +1,7 @@
 // app/page.tsx
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Crown, Gift, ArrowLeft, Trophy, ChevronRight,
@@ -94,12 +94,10 @@ type Star = {
 };
 
 // --- SECURITY UTILS ---
-// 1. Sanitasi Input (Anti-Injection)
 const sanitizeInput = (input: string) => {
   return input.replace(/[^a-zA-Z0-9]/g, "");
 };
 
-// 2. Cryptographically Secure Random (Anti-Cheating RNG)
 const getSecureRandomInt = (max: number) => {
   if (max <= 0) return 0;
   const array = new Uint32Array(1);
@@ -134,7 +132,7 @@ export default function Home() {
   const [passcodeInput, setPasscodeInput] = useState("");
   const [authorized, setAuthorized] = useState<{ doorprize: boolean; royal: boolean }>({ doorprize: false, royal: false });
 
-  // Rate Limiting State (Anti-Brute Force Smart Logic)
+  // Rate Limiting
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [isLockedOut, setIsLockedOut] = useState(false);
   const [lockoutTimer, setLockoutTimer] = useState(0);
@@ -153,8 +151,8 @@ export default function Home() {
   const [revealedRoyalWinner, setRevealedRoyalWinner] = useState<MergedRoyalWinner | null>(null);
   const [confettiParticles, setConfettiParticles] = useState<Particle[]>([]);
 
-  // State for Stars
-  const [stars, setStars] = useState<Star[]>(() => Array.from({ length: 50 }).map((_, i) => ({
+  // State for Stars (Memoized initialization)
+  const [stars] = useState<Star[]>(() => Array.from({ length: 50 }).map((_, i) => ({
     id: i,
     top: Math.random() * 100,
     left: Math.random() * 100,
@@ -176,9 +174,8 @@ export default function Home() {
   // Audio State
   const [isMuted, setIsMuted] = useState(false);
 
-  // --- 2. INITIALIZE VISUALS & AUDIO (SMART LOAD) ---
+  // --- 2. INITIALIZE VISUALS & AUDIO ---
   useEffect(() => {
-    // Audio Objects Creation - Checks if already exists to prevent double loading
     if (typeof window !== "undefined") {
       if (!spinAudioRef.current) {
         spinAudioRef.current = new Audio("/sounds/drumroll.mp3");
@@ -209,7 +206,6 @@ export default function Home() {
     window.addEventListener('click', startAudioOnInteraction, { once: true });
     window.addEventListener('keydown', startAudioOnInteraction, { once: true });
 
-    // Cleanup audio on unmount to prevent ghost sounds
     return () => {
       window.removeEventListener('click', startAudioOnInteraction);
       window.removeEventListener('keydown', startAudioOnInteraction);
@@ -221,13 +217,13 @@ export default function Home() {
         }
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // --- SMART AUDIO HELPERS ---
   const smartPlay = (audioRef: React.MutableRefObject<HTMLAudioElement | null>) => {
     if (audioRef.current) {
-      audioRef.current.currentTime = 0; // Reset ke awal agar tidak overlap
+      audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => {});
     }
   };
@@ -260,7 +256,6 @@ export default function Home() {
         if (!bgmAudioRef.current) return;
 
         const currentVol = bgmAudioRef.current.volume;
-        // Smooth transition
         if (Math.abs(currentVol - targetVolume) < 0.02) {
           bgmAudioRef.current.volume = targetVolume;
           if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
@@ -309,7 +304,7 @@ export default function Home() {
 
   const triggerCelebration = () => {
     setConfettiParticles([]);
-    smartStop(clapAudioRef); // Stop clap before win sound
+    smartStop(clapAudioRef);
     smartPlay(winAudioRef);
     setTimeout(() => {
       setConfettiParticles(generateConfetti(200));
@@ -378,7 +373,7 @@ export default function Home() {
     };
   }, [view]);
 
-  // --- CHECK LOCKOUT STATUS ON MOUNT (ANTI-BYPASS REFRESH) ---
+  // --- CHECK LOCKOUT STATUS ---
   useEffect(() => {
     const checkLock = () => {
       const lockoutTimestamp = localStorage.getItem("lockout_timestamp");
@@ -388,7 +383,6 @@ export default function Home() {
           setIsLockedOut(true);
           setLockoutTimer(timeRemaining);
           
-          // Start timer interval logic
           if (lockoutIntervalRef.current) clearInterval(lockoutIntervalRef.current);
           lockoutIntervalRef.current = setInterval(() => {
             setLockoutTimer((prev) => {
@@ -396,14 +390,13 @@ export default function Home() {
                 if (lockoutIntervalRef.current) clearInterval(lockoutIntervalRef.current);
                 setIsLockedOut(false);
                 setFailedAttempts(0);
-                localStorage.removeItem("lockout_timestamp"); // Clear storage
+                localStorage.removeItem("lockout_timestamp");
                 return 0;
               }
               return prev - 1;
             });
           }, 1000);
         } else {
-          // Clean up expired timestamp
           localStorage.removeItem("lockout_timestamp");
           setIsLockedOut(false);
           setFailedAttempts(0);
@@ -414,17 +407,19 @@ export default function Home() {
     return () => { if (lockoutIntervalRef.current) clearInterval(lockoutIntervalRef.current); }
   }, []);
 
-  // --- COMPUTED DATA ---
-  const mergedRoyalWinners: MergedRoyalWinner[] = royalSlots.map(slot => {
-    const candidate = royalCandidates.find(c => c.id === slot.candidateId);
-    return {
-      id: slot.id, rank: slot.rank, title: slot.title,
-      name: candidate ? candidate.name : "Belum Dipilih",
-      company: candidate ? candidate.company : "-"
-    };
-  }).filter(w => w.name !== "Belum Dipilih");
+  // --- COMPUTED DATA (MEMOIZED FOR PERFORMANCE) ---
+  const mergedRoyalWinners = useMemo<MergedRoyalWinner[]>(() => {
+    return royalSlots.map(slot => {
+      const candidate = royalCandidates.find(c => c.id === slot.candidateId);
+      return {
+        id: slot.id, rank: slot.rank, title: slot.title,
+        name: candidate ? candidate.name : "Belum Dipilih",
+        company: candidate ? candidate.company : "-"
+      };
+    }).filter(w => w.name !== "Belum Dipilih");
+  }, [royalSlots, royalCandidates]);
 
-  const totalItemsRemaining = prizes.reduce((acc, curr) => acc + curr.stock, 0);
+  const totalItemsRemaining = useMemo(() => prizes.reduce((acc, curr) => acc + curr.stock, 0), [prizes]);
   const isRoyalCompleted = royalSlots.length > 0 && royalWinnersDb.length >= royalSlots.length;
   const isDoorprizeCompleted = prizes.length > 0 && totalItemsRemaining === 0;
 
@@ -434,14 +429,12 @@ export default function Home() {
     if (targetView === "royal" && isRoyalCompleted) { setView(targetView); return; }
     if (targetView === "doorprize" && isDoorprizeCompleted) { setView(targetView); return; }
     
-    // Prevent access if closed
     if (status === "closed") { alert("Sesi ini belum dibuka oleh Admin."); return; }
     
     if (authorized[targetView]) { setView(targetView); }
     else { 
         setPasscodeModal(targetView); 
         setPasscodeInput("");
-        // Do NOT reset failedAttempts here to persist attempts across modal toggles
     }
   };
 
@@ -458,9 +451,8 @@ export default function Home() {
       setView(passcodeModal);
       setPasscodeModal(null);
       setFailedAttempts(0);
-      localStorage.removeItem("lockout_timestamp"); // Clear any potential residuals
+      localStorage.removeItem("lockout_timestamp");
     } else {
-      // --- ROBUST LOCKOUT LOGIC ---
       const newAttempts = failedAttempts + 1;
       setFailedAttempts(newAttempts);
       setPasscodeInput("");
@@ -469,7 +461,6 @@ export default function Home() {
           const lockoutDuration = 30; // Detik
           const unlockTime = Date.now() + (lockoutDuration * 1000);
           
-          // SAVE TO STORAGE TO PREVENT REFRESH BYPASS
           localStorage.setItem("lockout_timestamp", unlockTime.toString());
           
           setIsLockedOut(true);
@@ -557,7 +548,6 @@ export default function Home() {
 
   // --- LOGIC: DOORPRIZE ---
   const handleDoorprizeSpin = async () => {
-    // 1. Validasi Stok dan Peserta
     const availablePrizes = prizes.filter(p => p.stock > 0);
     const previousWinnerNames = doorprizeLog.map(log => log.name);
     const eligibleParticipants = participants.filter(p => !previousWinnerNames.includes(p.name));
@@ -569,7 +559,6 @@ export default function Home() {
       return;
     }
 
-    // 2. Start Animation
     setIsSpinning(true);
     setWinner(null);
     setPendingDoorprize(null);
@@ -581,17 +570,14 @@ export default function Home() {
       setRollingName(participants[randomIndex].name);
     }, 50);
 
-    // 3. Secure Determination Logic
     setTimeout(async () => {
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
       smartStop(spinAudioRef);
       smartPlay(clapAudioRef);
 
-      // Secure Random Selection
       const randomWinnerIndex = getSecureRandomInt(eligibleParticipants.length);
       const finalWinner = eligibleParticipants[randomWinnerIndex];
 
-      // Prize Pool Weighted Logic (Equal Chance per Unit)
       const prizePool: Prize[] = [];
       availablePrizes.forEach(prize => {
         for (let i = 0; i < prize.stock; i++) { prizePool.push(prize); }
@@ -599,7 +585,6 @@ export default function Home() {
       const randomPrizeIndex = getSecureRandomInt(prizePool.length);
       const selectedPrize = prizePool[randomPrizeIndex];
       
-      // Basic Integrity Check
       if(!finalWinner || !selectedPrize) {
           alert("Terjadi kesalahan kalkulasi. Silakan coba lagi.");
           setIsSpinning(false);
@@ -648,7 +633,8 @@ export default function Home() {
     smartStop(winAudioRef);
   };
 
-  const modalData = view === "royal" ? royalCandidates : participants;
+  // Memoized Modal Data to prevent lag during re-renders
+  const modalData = useMemo(() => view === "royal" ? royalCandidates : participants, [view, royalCandidates, participants]);
   const modalTitle = view === "royal" ? "Kandidat Royal Top 6" : "Peserta Doorprize";
 
   if (loading) {
@@ -674,28 +660,29 @@ export default function Home() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.1 }}
-            className="fixed inset-0 z-[100] bg-white pointer-events-none mix-blend-overlay"
+            className="fixed inset-0 z-[100] bg-white pointer-events-none mix-blend-overlay will-change-[opacity]"
           />
         )}
       </AnimatePresence>
 
       {/* --- NEW MODERN BACKGROUND SYSTEM (AURORA & STARS) --- */}
-      <div className="fixed inset-0 pointer-events-none z-0">
+      {/* Optimized: translate-z-0 for GPU promotion */}
+      <div className="fixed inset-0 pointer-events-none z-0 transform-gpu">
         <div className="absolute inset-0 bg-slate-950"></div>
 
         {/* Static Noise Texture */}
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 mix-blend-overlay"></div>
 
-        {/* Deep Ambient Glow (Aurora) */}
-        <div className="absolute top-[-20%] left-[-20%] w-[80%] h-[80%] bg-blue-900/20 rounded-full blur-[150px] animate-pulse"></div>
-        <div className="absolute bottom-[-20%] right-[-20%] w-[80%] h-[80%] bg-purple-900/20 rounded-full blur-[150px] animate-pulse" style={{ animationDelay: '2s' }}></div>
+        {/* Deep Ambient Glow (Aurora) - Optimized with transform-gpu */}
+        <div className="absolute top-[-20%] left-[-20%] w-[80%] h-[80%] bg-blue-900/20 rounded-full blur-[150px] animate-pulse transform-gpu will-change-transform"></div>
+        <div className="absolute bottom-[-20%] right-[-20%] w-[80%] h-[80%] bg-purple-900/20 rounded-full blur-[150px] animate-pulse transform-gpu will-change-transform" style={{ animationDelay: '2s' }}></div>
 
         {/* Twinkling Stars Effect */}
         <div className="absolute inset-0 w-full h-full">
           {stars.map((star) => (
             <div
               key={star.id}
-              className="absolute bg-white rounded-full opacity-20 animate-pulse"
+              className="absolute bg-white rounded-full opacity-20 animate-pulse will-change-[opacity]"
               style={{
                 top: `${star.top}%`,
                 left: `${star.left}%`,
@@ -758,11 +745,11 @@ export default function Home() {
         {(pendingDoorprize || pendingRoyal) && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-y-auto">
 
-            {/* ROTATING GOD RAYS BACKGROUND FOR MODAL */}
+            {/* ROTATING GOD RAYS BACKGROUND FOR MODAL - Optimized */}
             <motion.div
               animate={{ rotate: 360 }}
               transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-              className="absolute z-0 w-[800px] h-[800px] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.2)_180deg,transparent_360deg)] rounded-full blur-3xl opacity-50 pointer-events-none"
+              className="absolute z-0 w-[800px] h-[800px] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.2)_180deg,transparent_360deg)] rounded-full blur-3xl opacity-50 pointer-events-none transform-gpu will-change-transform"
             />
             <motion.div initial={{ scale: 0.5, y: 100 }} animate={{ scale: 1, y: 0 }} className="bg-slate-900 border-2 border-yellow-500/50 p-6 md:p-8 rounded-[2rem] max-w-lg w-full text-center relative overflow-hidden shadow-[0_0_80px_rgba(234,179,8,0.3)] z-10 m-auto">
               <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10"></div>
@@ -890,7 +877,7 @@ export default function Home() {
             <motion.div key="menu" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.05 }} transition={{ duration: 0.4 }} className="flex flex-col items-center gap-8 md:gap-12 mt-4 md:mt-10">
 
               <div className="text-center relative px-2">
-                <div className="absolute -inset-10 bg-blue-500/20 blur-3xl rounded-full"></div>
+                <div className="absolute -inset-10 bg-blue-500/20 blur-3xl rounded-full transform-gpu"></div>
                 <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="relative">
                   <h1 className="text-5xl sm:text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-200 to-slate-400 drop-shadow-[0_0_30px_rgba(255,255,255,0.3)] tracking-tighter">GATHERING 2025</h1>
                   <div className="flex items-center justify-center gap-4 mt-4">
@@ -909,7 +896,7 @@ export default function Home() {
                   <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
 
                   <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-end">
-                    <Trophy className="absolute top-6 right-6 md:top-8 md:right-8 text-yellow-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-yellow-500/40 group-hover:scale-110 group-hover:rotate-6 transition-all duration-500" />
+                    <Trophy className="absolute top-6 right-6 md:top-8 md:right-8 text-yellow-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-yellow-500/40 group-hover:scale-110 group-hover:rotate-6 transition-all duration-500 transform-gpu" />
                     <div className="space-y-2">
                       <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isRoyalCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-yellow-500/20 border-yellow-500/30 text-yellow-300'}`}>
                         {isRoyalCompleted ? <><Sparkles size={12} /> COMPLETED</> : (config.royalStatus === 'closed' ? <><Lock size={12} /> Locked</> : <><Sparkles size={12} /> Awards</>)}
@@ -926,7 +913,7 @@ export default function Home() {
                   <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
 
                   <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-end">
-                    <Gift className="absolute top-6 right-6 md:top-8 md:right-8 text-cyan-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-cyan-500/40 group-hover:scale-110 group-hover:-rotate-6 transition-all duration-500" />
+                    <Gift className="absolute top-6 right-6 md:top-8 md:right-8 text-cyan-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-cyan-500/40 group-hover:scale-110 group-hover:-rotate-6 transition-all duration-500 transform-gpu" />
                     <div className="space-y-2">
                       <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isDoorprizeCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-cyan-500/20 border-cyan-500/30 text-cyan-300'}`}>
                         {isDoorprizeCompleted ? <><Zap size={12} /> SOLD OUT</> : (config.doorprizeStatus === 'closed' ? <><Lock size={12} /> Locked</> : <><Zap size={12} /> Lucky Draw</>)}
@@ -974,13 +961,13 @@ export default function Home() {
                 {/* 2. STATE: SPINNING / PENDING */}
                 {(isRoyalSpinning || pendingRoyal) && (
                   <div className="w-full max-w-4xl h-[400px] flex flex-col items-center justify-center relative">
-                    <div className="absolute inset-0 bg-yellow-500/5 blur-[100px] rounded-full animate-pulse"></div>
+                    <div className="absolute inset-0 bg-yellow-500/5 blur-[100px] rounded-full animate-pulse transform-gpu"></div>
                     {isRoyalSpinning ? (
                       <div className="text-yellow-500 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 animate-pulse uppercase">Mendapatkan Nama...</div>
                     ) : (
                       <div className="text-green-400 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 uppercase">Winner Found!</div>
                     )}
-                    <h2 className="text-4xl sm:text-5xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 blur-[2px] animate-pulse text-center leading-tight break-all">
+                    <h2 className="text-4xl sm:text-5xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 blur-[2px] animate-pulse text-center leading-tight break-all will-change-[opacity,transform]">
                       {rollingName}
                     </h2>
                   </div>
@@ -989,14 +976,14 @@ export default function Home() {
                 {/* 3. STATE: REVEALED */}
                 {revealedRoyalWinner && (
                   <div className="relative w-full max-w-4xl px-4">
-                    {/* GOD RAYS BEHIND CARD */}
+                    {/* GOD RAYS BEHIND CARD - Optimized */}
                     <motion.div
                       animate={{ rotate: 360 }}
                       transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-                      className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.1)_90deg,transparent_180deg)] rounded-full z-0 pointer-events-none"
+                      className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.1)_90deg,transparent_180deg)] rounded-full z-0 pointer-events-none transform-gpu will-change-transform"
                     />
 
-                    {/* 3D CONFETTI RIBBONS - FIXED SPREAD */}
+                    {/* 3D CONFETTI RIBBONS - Optimized with will-change-transform */}
                     <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden h-[200%] -top-[50%]">
                       {confettiParticles.map((p, i) => (
                         <motion.div
@@ -1004,15 +991,15 @@ export default function Home() {
                           initial={{ y: -50, x: 0, opacity: 1, rotate: 0 }}
                           animate={{
                             y: '100vh',
-                            x: p.sway, // Movement is only sway, base position is CSS left
+                            x: p.sway,
                             rotateX: p.rotation * 2,
                             rotateY: p.rotation * 2,
                             rotateZ: p.rotation
                           }}
                           transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
-                          className={`absolute ${p.color}`}
+                          className={`absolute ${p.color} will-change-transform`}
                           style={{
-                            left: `${p.x}%`, // FIX: Use CSS left for distribution
+                            left: `${p.x}%`,
                             width: p.width,
                             height: p.height
                           }}
@@ -1027,11 +1014,11 @@ export default function Home() {
                       className="bg-gradient-to-br from-slate-900 to-black rounded-[2rem] md:rounded-[3rem] p-1 border border-yellow-500/50 shadow-[0_0_100px_rgba(234,179,8,0.3)] relative overflow-hidden z-10 w-full"
                     >
                       <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-30 mix-blend-overlay"></div>
-                      <div className="absolute -top-40 -right-40 w-96 h-96 bg-yellow-600/30 rounded-full blur-[80px]"></div>
+                      <div className="absolute -top-40 -right-40 w-96 h-96 bg-yellow-600/30 rounded-full blur-[80px] transform-gpu"></div>
 
                       <div className="bg-slate-950/80 backdrop-blur-3xl rounded-[1.8rem] md:rounded-[2.8rem] p-6 md:p-12 text-center md:text-left flex flex-col md:flex-row items-center gap-6 md:gap-10 relative z-10">
                         <div className="relative shrink-0">
-                          <div className="absolute inset-0 bg-yellow-500 blur-[60px] opacity-40 animate-pulse"></div>
+                          <div className="absolute inset-0 bg-yellow-500 blur-[60px] opacity-40 animate-pulse transform-gpu"></div>
                           <Medal className="text-yellow-400 w-32 h-32 md:w-56 md:h-56 drop-shadow-2xl relative z-10" strokeWidth={1} />
                           <div className="absolute inset-0 flex items-center justify-center z-20 pt-4">
                             <span className="text-5xl md:text-8xl font-black text-white drop-shadow-md">#{revealedRoyalWinner.rank}</span>
@@ -1081,7 +1068,7 @@ export default function Home() {
                             rotateZ: p.rotation
                           }}
                           transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
-                          className={`absolute ${p.color}`}
+                          className={`absolute ${p.color} will-change-transform`}
                           style={{
                             left: `${p.x}%`,
                             width: p.width,
@@ -1179,7 +1166,7 @@ export default function Home() {
                 {!isSpinning && !winner ? (
                   <div className="bg-gradient-to-br from-slate-900 to-slate-950 rounded-[3rem] p-6 md:p-10 border border-cyan-500/20 shadow-[0_0_60px_rgba(6,182,212,0.1)] flex flex-col items-center justify-center min-h-[300px] md:min-h-[350px] relative overflow-hidden">
                     <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2032%2032%27%20width=%2732%27%20height=%2732%27%20fill=%27none%27%20stroke=%27rgb(6%20182%20212%20/%200.2)%27%3e%3cpath%20d=%27M0%20.5H31.5V32%27/%3e%3c/svg%3e')] opacity-10"></div>
-                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }} className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,cyan_360deg)] opacity-5 blur-[100px]"></motion.div>
+                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }} className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,cyan_360deg)] opacity-5 blur-[100px] transform-gpu will-change-transform"></motion.div>
 
                     <div className="relative z-10 text-center w-full max-w-lg">
                       <motion.div
@@ -1204,24 +1191,24 @@ export default function Home() {
                   </div>
                 ) : (isSpinning || pendingDoorprize) ? (
                   <div className="bg-black/40 backdrop-blur-xl rounded-[3rem] p-8 md:p-12 border border-cyan-500/50 shadow-[0_0_100px_rgba(6,182,212,0.2)] min-h-[300px] md:min-h-[450px] flex flex-col items-center justify-center text-center relative overflow-hidden">
-                    <div className="absolute inset-0 bg-cyan-500/5 animate-pulse"></div>
+                    <div className="absolute inset-0 bg-cyan-500/5 animate-pulse transform-gpu"></div>
 
                     {/* HYPERSPACE EFFECT */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
                       <motion.div
                         animate={{ scale: [1, 2], opacity: [0, 1, 0] }}
                         transition={{ duration: 0.5, repeat: Infinity }}
-                        className="w-64 h-64 md:w-96 md:h-96 border-4 border-cyan-500 rounded-full"
+                        className="w-64 h-64 md:w-96 md:h-96 border-4 border-cyan-500 rounded-full will-change-transform"
                       />
                       <motion.div
                         animate={{ scale: [0.5, 2], opacity: [0, 1, 0] }}
                         transition={{ duration: 0.5, delay: 0.2, repeat: Infinity }}
-                        className="absolute w-64 h-64 md:w-96 md:h-96 border-2 border-white rounded-full"
+                        className="absolute w-64 h-64 md:w-96 md:h-96 border-2 border-white rounded-full will-change-transform"
                       />
                     </div>
 
                     <p className="text-cyan-400 font-mono tracking-[0.2em] md:tracking-[0.5em] text-xs md:text-sm mb-6 md:mb-8 animate-pulse relative z-10">MENGACAK PESERTA...</p>
-                    <h2 className="text-4xl sm:text-5xl md:text-8xl font-black text-white break-all w-full blur-[1px] relative z-10 leading-tight">
+                    <h2 className="text-4xl sm:text-5xl md:text-8xl font-black text-white break-all w-full blur-[1px] relative z-10 leading-tight will-change-[opacity]">
                       {/* Pulse Effect on Text */}
                       <motion.span animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 0.1, repeat: Infinity }}>
                         {rollingName}
@@ -1230,7 +1217,7 @@ export default function Home() {
                   </div>
                 ) : (
                   <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-gradient-to-b from-slate-900 to-black rounded-[3rem] p-6 md:p-12 border-2 border-cyan-400 shadow-[0_0_100px_rgba(6,182,212,0.4)] text-center relative overflow-hidden min-h-[400px] md:min-h-[450px] flex flex-col items-center justify-center">
-                    {/* 3D Confetti */}
+                    {/* 3D Confetti - Optimized */}
                     <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
                       {confettiParticles.map((p, i) => (
                         <motion.div
@@ -1244,7 +1231,7 @@ export default function Home() {
                             rotateZ: p.rotation
                           }}
                           transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
-                          className={`absolute ${p.color}`}
+                          className={`absolute ${p.color} will-change-transform`}
                           style={{
                             left: `${p.x}%`,
                             width: p.width,
@@ -1258,7 +1245,7 @@ export default function Home() {
                     <motion.div
                       animate={{ rotate: 360 }}
                       transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                      className="absolute z-0 -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(6,182,212,0.15)_90deg,transparent_180deg)] rounded-full"
+                      className="absolute z-0 -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(6,182,212,0.15)_90deg,transparent_180deg)] rounded-full transform-gpu will-change-transform"
                     />
                     <div className="relative z-10 w-full max-w-2xl">
                       <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="inline-flex items-center gap-2 px-4 py-1.5 md:px-6 md:py-2 rounded-full bg-cyan-500/20 border border-cyan-500/50 text-cyan-300 font-bold mb-6 md:mb-8 shadow-[0_0_20px_rgba(6,182,212,0.3)] text-xs md:text-base">
@@ -1275,7 +1262,7 @@ export default function Home() {
                       </motion.h1>
 
                       <div className="relative group w-full max-w-md mx-auto mb-8 md:mb-10">
-                        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl rotate-2 opacity-60 blur-xl group-hover:opacity-100 transition-opacity"></div>
+                        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl rotate-2 opacity-60 blur-xl group-hover:opacity-100 transition-opacity transform-gpu"></div>
                         <div className="relative bg-slate-900 border border-white/20 rounded-2xl p-4 md:p-6 flex flex-col sm:flex-row items-center gap-6 text-left">
                           {winner?.prize.image_url ? (
                             // eslint-disable-next-line @next/next/no-img-element

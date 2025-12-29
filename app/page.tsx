@@ -958,7 +958,7 @@ export default function Home() {
                       <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isAwardCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-yellow-500/20 border-yellow-500/30 text-yellow-300'}`}>
                         {isAwardCompleted ? <><Sparkles size={12} /> COMPLETED</> : (config.awardStatus === 'closed' ? <><Lock size={12} /> Locked</> : <><Sparkles size={12} /> Awards</>)}
                       </div>
-                      <h2 className="text-2xl md:text-5xl font-bold text-white group-hover:text-yellow-200 transition-colors">Awards Night</h2>
+                      <h2 className="text-2xl md:text-5xl font-bold text-white group-hover:text-yellow-200 transition-colors">Awards</h2>
                       <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-sm md:text-lg max-w-sm">Pengungkapan penghargaan kategori terbaik tahun ini.</p>
                     </div>
                   </div>

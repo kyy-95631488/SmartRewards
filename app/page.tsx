@@ -307,7 +307,7 @@ export default function Home() {
             }
         }, 50);
     }
-     
+      
     return () => {
         if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
     }
@@ -809,48 +809,48 @@ export default function Home() {
               className="absolute z-0 w-[800px] h-[800px] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.2)_180deg,transparent_360deg)] rounded-full blur-3xl opacity-50 pointer-events-none transform-gpu will-change-transform"
             />
             
-            {/* MODAL CONTAINER - MODIFIED TO BE WIDER (PERSEGI PANJANG) */}
+            {/* MODAL CONTAINER - LEBAR DIKURANGI JADI MAX-W-3XL */}
             <motion.div 
               initial={{ scale: 0.5, y: 100 }} 
               animate={{ scale: 1, y: 0 }} 
-              className="bg-slate-900 border-2 border-yellow-500/50 p-6 md:p-10 rounded-[2rem] max-w-3xl w-full text-center relative overflow-hidden shadow-[0_0_80px_rgba(234,179,8,0.3)] z-10 m-auto"
+              className="bg-slate-900 border-2 border-yellow-500/50 p-6 md:p-10 rounded-[2rem] max-w-3xl w-full text-center relative overflow-hidden shadow-[0_0_80px_rgba(234,179,8,0.3)] z-10 m-auto flex flex-col items-center justify-center"
             >
               <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10"></div>
-              <div className="relative z-10">
+              <div className="relative z-10 w-full flex flex-col items-center">
                 <div className="text-yellow-400 font-bold tracking-widest uppercase mb-6 animate-pulse text-xs md:text-sm">Konfirmasi Hasil</div>
 
                 {/* --- DOORPRIZE CONFIRMATION --- */}
                 {pendingDoorprize && (
-                  <div className="flex flex-col items-center justify-center">
-                    {/* Winner Name: Adjusted size to be prominent but not overwhelming */}
-                    <h2 className="text-3xl md:text-5xl font-black text-white mb-2 drop-shadow-md break-words w-full leading-tight">
+                  <div className="flex flex-col items-center justify-center w-full">
+                    {/* Winner Name: Adjusted size (text-4xl) to not be too big */}
+                    <h2 className="text-3xl md:text-4xl font-black text-white mb-2 drop-shadow-md break-words w-full leading-tight text-center">
                         {pendingDoorprize.winner.name}
                     </h2>
                     <div className="h-1 w-24 bg-gradient-to-r from-transparent via-cyan-500 to-transparent my-4"></div>
 
-                    {/* Prize Info Container */}
-                    <div className="w-full bg-slate-950/50 rounded-2xl p-6 border border-white/5 mb-8 flex flex-col md:flex-row items-center gap-6 md:gap-8">
+                    {/* Prize Info Container - CENTERED LAYOUT */}
+                    <div className="w-full bg-slate-950/50 rounded-2xl p-6 border border-white/5 mb-8 flex flex-col md:flex-row items-center justify-center gap-6 md:gap-8">
                         {/* Prize Image */}
-                        <div className="w-full md:w-1/3 flex justify-center">
+                        <div className="flex justify-center shrink-0">
                             {pendingDoorprize.prize.image_url ? (
                                 // eslint-disable-next-line @next/next/no-img-element
-                                <img src={pendingDoorprize.prize.image_url} alt="" className="h-32 md:h-32 w-auto rounded-lg object-contain drop-shadow-lg" />
+                                <img src={pendingDoorprize.prize.image_url} alt="" className="h-32 md:h-40 w-auto rounded-lg object-contain drop-shadow-lg" />
                             ) : (
                                 <Gift className="text-slate-600" size={80} />
                             )}
                         </div>
                         
-                        {/* Prize Text Details */}
-                        <div className="w-full md:w-2/3 text-center md:text-left">
+                        {/* Prize Text Details - CENTERED */}
+                        <div className="text-center md:text-left flex flex-col items-center md:items-start">
                            <p className="text-slate-400 text-sm mb-1 uppercase tracking-wider">Mendapatkan Hadiah:</p>
-                           <h3 className="text-2xl md:text-3xl font-bold text-cyan-400 leading-tight">
+                           <h3 className="text-xl md:text-3xl font-bold text-cyan-400 leading-tight">
                                 {pendingDoorprize.prize.name}
                            </h3>
                         </div>
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="flex flex-col sm:flex-row gap-4 w-full md:w-2/3 mx-auto">
+                    <div className="flex flex-col sm:flex-row gap-4 w-full mx-auto">
                       <button onClick={retryDoorprize} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base transition-all"><RotateCcw size={18} /> Spin Ulang</button>
                       <button onClick={confirmDoorprizeWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-gradient-to-r from-yellow-500 to-yellow-400 text-slate-900 hover:scale-105 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base transition-all"><Save size={18} /> SAH & SIMPAN</button>
                     </div>
@@ -859,8 +859,8 @@ export default function Home() {
 
                 {/* --- AWARDS CONFIRMATION --- */}
                 {pendingAward && (
-                  <div className="flex flex-col items-center">
-                    <div className="flex items-center gap-3 mb-4">
+                  <div className="flex flex-col items-center w-full">
+                    <div className="flex items-center justify-center gap-3 mb-4">
                         <Crown className="text-yellow-400" size={32} />
                         <h3 className="text-xl md:text-2xl text-yellow-200">{pendingAward.winner.category}</h3>
                     </div>
@@ -869,14 +869,14 @@ export default function Home() {
                         JUARA {pendingAward.winner.rank}
                     </div>
                     
-                    {/* Winner Name - Adjusted Size */}
-                    <h2 className="text-3xl md:text-5xl font-black text-white mb-3 drop-shadow-lg break-words w-full leading-tight">
+                    {/* Winner Name - Adjusted Size (text-4xl) */}
+                    <h2 className="text-3xl md:text-4xl font-black text-white mb-3 drop-shadow-lg break-words w-full leading-tight text-center">
                         {pendingAward.winner.name}
                     </h2>
                     {/* Company Removed here */}
                     <div className="mb-10"></div> 
 
-                    <div className="flex flex-col sm:flex-row gap-4 w-full md:w-2/3 mx-auto">
+                    <div className="flex flex-col sm:flex-row gap-4 w-full mx-auto">
                       <button onClick={retryAward} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base transition-all"><RotateCcw size={18} /> Batal</button>
                       <button onClick={confirmAwardWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-gradient-to-r from-yellow-500 to-yellow-400 text-slate-900 hover:scale-105 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base transition-all"><Save size={18} /> SAH & REVEAL</button>
                     </div>
@@ -1047,14 +1047,15 @@ export default function Home() {
 
                 {/* 2. STATE: SPINNING / PENDING */}
                 {(isAwardSpinning || pendingAward) && (
-                  <div className="w-full max-w-4xl h-[400px] flex flex-col items-center justify-center relative">
+                  // FIXED: Changed h-[400px] to min-h-[400px] to prevent text cutoff
+                  <div className="w-full max-w-4xl min-h-[400px] py-10 flex flex-col items-center justify-center relative">
                     <div className="absolute inset-0 bg-yellow-500/5 blur-[100px] rounded-full animate-pulse transform-gpu"></div>
                     {isAwardSpinning ? (
-                      <div className="text-yellow-500 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 animate-pulse uppercase">Mengungkap Data...</div>
+                      <div className="text-yellow-500 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 animate-pulse uppercase relative z-10">Mengungkap Data...</div>
                     ) : (
-                      <div className="text-green-400 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 uppercase">Winner Found!</div>
+                      <div className="text-green-400 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 uppercase relative z-10">Winner Found!</div>
                     )}
-                    <h2 className="text-4xl sm:text-5xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 blur-[2px] animate-pulse text-center leading-tight break-all will-change-[opacity,transform]">
+                    <h2 className="text-4xl sm:text-5xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 blur-[2px] animate-pulse text-center leading-tight break-all will-change-[opacity,transform] relative z-10 p-4">
                       {rollingName}
                     </h2>
                   </div>
@@ -1062,6 +1063,7 @@ export default function Home() {
 
                 {/* 3. STATE: REVEALED */}
                 {revealedAwardWinner && (
+                  // FIXED: Changed max-w-6xl to max-w-4xl for better centering
                   <div className="relative w-full max-w-4xl px-4">
                     {/* GOD RAYS & CONFETTI */}
                     <motion.div animate={{ rotate: 360 }} transition={{ duration: 15, repeat: Infinity, ease: "linear" }} className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.1)_90deg,transparent_180deg)] rounded-full z-0 pointer-events-none transform-gpu will-change-transform" />
@@ -1086,10 +1088,10 @@ export default function Home() {
                       transition={{ type: "spring", bounce: 0.4, duration: 1.5 }}
                       className="bg-gradient-to-br from-slate-900 to-black rounded-[2rem] md:rounded-[3rem] p-1 border border-yellow-500/50 shadow-[0_0_100px_rgba(234,179,8,0.3)] relative overflow-hidden z-10 w-full"
                     >
-                      <div className="bg-slate-950/80 backdrop-blur-3xl rounded-[1.8rem] md:rounded-[2.8rem] p-6 md:p-12 text-center md:text-left flex flex-col md:flex-row items-center gap-6 md:gap-10 relative z-10">
+                      <div className="bg-slate-950/80 backdrop-blur-3xl rounded-[1.8rem] md:rounded-[2.8rem] p-6 md:p-12 text-center flex flex-col items-center gap-6 md:gap-10 relative z-10">
                         <div className="relative shrink-0">
                           <div className="absolute inset-0 bg-yellow-500 blur-[60px] opacity-40 animate-pulse transform-gpu"></div>
-                          <Medal className="text-yellow-400 w-32 h-32 md:w-56 md:h-56 drop-shadow-2xl relative z-10" strokeWidth={1} />
+                          <Medal className="text-yellow-400 w-32 h-32 md:w-48 md:h-48 drop-shadow-2xl relative z-10" strokeWidth={1} />
                           <div className="absolute inset-0 flex items-center justify-center z-20 pt-4">
                             <span className="text-5xl md:text-8xl font-black text-white drop-shadow-md">#{revealedAwardWinner.rank}</span>
                           </div>
@@ -1099,7 +1101,7 @@ export default function Home() {
                             <div className="inline-block px-4 py-1 bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 rounded-full text-xs md:text-sm font-bold uppercase tracking-wider mb-4">
                               {revealedAwardWinner.category}
                             </div>
-                            <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-black text-white leading-[1.1] md:leading-[0.9] mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-yellow-100 to-yellow-500 drop-shadow-lg break-words">
+                            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white leading-[1.1] md:leading-[0.9] mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-yellow-100 to-yellow-500 drop-shadow-lg break-words">
                               {revealedAwardWinner.name}
                             </h1>
 
@@ -1322,7 +1324,7 @@ export default function Home() {
                     </h2>
                   </div>
                 ) : (
-                  <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-gradient-to-b from-slate-900 to-black rounded-[3rem] p-6 md:p-12 border-2 border-cyan-400 shadow-[0_0_100px_rgba(6,182,212,0.4)] text-center relative overflow-hidden min-h-[400px] md:min-h-[450px] flex flex-col items-center justify-center">
+                  <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-gradient-to-b from-slate-900 to-black rounded-[3rem] p-6 md:p-12 border-2 border-cyan-400 shadow-[0_0_100px_rgba(6,182,212,0.4)] text-center relative overflow-hidden min-h-[400px] md:min-h-[450px] flex flex-col items-center justify-center max-w-4xl w-full">
                     <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
                       {confettiParticles.map((p, i) => (
                         <motion.div
@@ -1343,7 +1345,7 @@ export default function Home() {
                         <Gift size={18} /> SELAMAT KEPADA
                       </motion.div>
 
-                      <motion.h1 initial={{ scale: 0.5 }} animate={{ scale: [1, 1.1, 1] }} transition={{ duration: 0.5 }} className="text-4xl sm:text-5xl md:text-7xl font-black text-white mb-8 md:mb-10 drop-shadow-lg break-words">
+                      <motion.h1 initial={{ scale: 0.5 }} animate={{ scale: [1, 1.1, 1] }} transition={{ duration: 0.5 }} className="text-4xl sm:text-5xl md:text-6xl font-black text-white mb-8 md:mb-10 drop-shadow-lg break-words">
                         {winner?.name}
                       </motion.h1>
 

@@ -870,9 +870,10 @@ export default function Home() {
                     </div>
                     
                     {/* Winner Name - Adjusted Size (text-4xl) */}
-                    <h2 className="text-3xl md:text-4xl font-black text-white mb-3 drop-shadow-lg break-words w-full leading-tight text-center">
-                        {pendingAward.winner.name}
-                    </h2>
+                    <h2 className="text-2xl md:text-3xl font-black text-white mb-3 drop-shadow-lg break-words w-full leading-tight text-center">
+  {pendingAward.winner.name}
+</h2>
+
                     {/* Company Removed here */}
                     <div className="mb-10"></div> 
 
@@ -1055,9 +1056,10 @@ export default function Home() {
                     ) : (
                       <div className="text-green-400 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 uppercase relative z-10">Winner Found!</div>
                     )}
-                    <h2 className="text-4xl sm:text-5xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 blur-[2px] animate-pulse text-center leading-tight break-all will-change-[opacity,transform] relative z-10 p-4">
+                    <h2 className="text-xl sm:text-2xl md:text-4xl lg:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-500 blur-[1px] animate-pulse text-center leading-snug break-words will-change-[opacity,transform] relative z-10 p-2">
                       {rollingName}
                     </h2>
+
                   </div>
                 )}
 
@@ -1096,16 +1098,28 @@ export default function Home() {
                             <span className="text-5xl md:text-8xl font-black text-white drop-shadow-md">#{revealedAwardWinner.rank}</span>
                           </div>
                         </div>
-                        <div className="flex-1 min-w-0 w-full">
-                          <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }}>
+                        
+                        {/* UPDATED SECTION: FLEX COL CENTER 
+                           Agar teks panjang tidak terpotong dan tidak turun berantakan
+                        */}
+                        <div className="flex-1 min-w-0 w-full flex flex-col items-center justify-center">
+                          <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="w-full flex flex-col items-center">
+                            
                             <div className="inline-block px-4 py-1 bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 rounded-full text-xs md:text-sm font-bold uppercase tracking-wider mb-4">
                               {revealedAwardWinner.category}
                             </div>
-                            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white leading-[1.1] md:leading-[0.9] mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-yellow-100 to-yellow-500 drop-shadow-lg break-words">
+                            
+                            {/* H1 MODIFIED: 
+                                - 'text-2xl' mobile start to prevent overflow
+                                - 'leading-tight' for better multi-line spacing
+                                - 'break-words' and 'px-2' ensures wrapping inside container
+                            */}
+                            <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black text-white leading-tight mb-2 md:mb-3 bg-clip-text text-transparent bg-gradient-to-r from-white via-yellow-100 to-yellow-500 drop-shadow-lg break-words w-full px-2 hyphens-auto">
                               {revealedAwardWinner.name}
                             </h1>
-
-                            <div className="h-px w-full bg-gradient-to-r from-yellow-500/50 to-transparent mb-8"></div>
+    
+                            {/* DIVIDER */}
+                            <div className="h-px w-full bg-gradient-to-r from-transparent via-yellow-500/50 to-transparent mb-8"></div>
 
                             {awardStep < mergedAwardWinners.length ? (
                               <button onClick={handleAwardReveal} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-white text-slate-900 rounded-full font-bold flex items-center justify-center gap-2 hover:bg-yellow-400 hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,255,255,0.3)] text-sm md:text-base">

@@ -147,11 +147,11 @@ export default function Home() {
 
   // Confirmation States
   const [pendingDoorprize, setPendingDoorprize] = useState<{ winner: Participant; prize: Prize } | null>(null);
-  
+    
   // Award Reveal States
   const [pendingAward, setPendingAward] = useState<{ winner: MergedAwardWinner } | null>(null);
   const [winner, setWinner] = useState<{ name: string; prize: Prize } | null>(null);
-  
+    
   const [awardStep, setAwardStep] = useState(0);
   const [isAwardSpinning, setIsAwardSpinning] = useState(false);
   const [revealedAwardWinner, setRevealedAwardWinner] = useState<MergedAwardWinner | null>(null);
@@ -217,7 +217,7 @@ export default function Home() {
     return () => {
       window.removeEventListener('click', startAudioOnInteraction);
       window.removeEventListener('keydown', startAudioOnInteraction);
-      
+        
       [spinAudioRef, clapAudioRef, winAudioRef, bgmAudioRef].forEach(ref => {
         if (ref.current) {
           ref.current.pause();
@@ -228,7 +228,7 @@ export default function Home() {
   }, []); // Empty dependency array intentionally
 
   // --- IMPROVED AUDIO HELPERS ---
-  
+    
   // Fungsi Helper untuk mematikan paksa semua suara
   const stopAllSounds = () => {
     [spinAudioRef, clapAudioRef, winAudioRef, bgmAudioRef].forEach(ref => {
@@ -295,7 +295,7 @@ export default function Home() {
         bgmFadeInterval.current = setInterval(() => {
             if (!bgmAudioRef.current) return;
             const currentVol = bgmAudioRef.current.volume;
-            
+              
             // Safety check floating point
             if (Math.abs(currentVol - targetVolume) < 0.02) {
                 bgmAudioRef.current.volume = targetVolume;
@@ -307,7 +307,7 @@ export default function Home() {
             }
         }, 50);
     }
-    
+     
     return () => {
         if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
     }
@@ -431,7 +431,7 @@ export default function Home() {
         if (timeRemaining > 0) {
           setIsLockedOut(true);
           setLockoutTimer(timeRemaining);
-          
+            
           if (lockoutIntervalRef.current) clearInterval(lockoutIntervalRef.current);
           lockoutIntervalRef.current = setInterval(() => {
             setLockoutTimer((prev) => {
@@ -459,7 +459,7 @@ export default function Home() {
   // --- MERGE AWARDS DATA ---
   const mergedAwardWinners = useMemo<MergedAwardWinner[]>(() => {
     const filledSlots = awardSlots.filter(s => s.candidateId && s.candidateId !== "");
-    
+      
     return filledSlots.map(slot => {
       const nominee = awardNominees.find(c => c.id === slot.candidateId);
       return {
@@ -480,7 +480,7 @@ export default function Home() {
   }, [awardSlots, awardNominees]);
 
   const totalItemsRemaining = useMemo(() => prizes.reduce((acc, curr) => acc + curr.stock, 0), [prizes]);
-  
+    
   // LOGIC COMPLETED: Menggunakan Database History
   const isAwardCompleted = useMemo(() => {
       return mergedAwardWinners.length > 0 && awardHistory.length >= mergedAwardWinners.length;
@@ -531,7 +531,7 @@ export default function Home() {
       const newAttempts = failedAttempts + 1;
       setFailedAttempts(newAttempts);
       setPasscodeInput("");
-      
+        
       if (newAttempts >= 5) {
           const lockoutDuration = 30;
           const unlockTime = Date.now() + (lockoutDuration * 1000);
@@ -578,7 +578,7 @@ export default function Home() {
   const confirmAwardWinner = async () => {
     if (!pendingAward) return;
     smartPlay(winAudioRef);
-    
+      
     setRevealedAwardWinner(pendingAward.winner);
     setConfettiParticles(generateConfetti(300));
     triggerFlashEffect();
@@ -649,7 +649,7 @@ export default function Home() {
       });
       const randomPrizeIndex = getSecureRandomInt(prizePool.length);
       const selectedPrize = prizePool[randomPrizeIndex];
-      
+        
       if(!finalWinner || !selectedPrize) {
           alert("Terjadi kesalahan kalkulasi. Silakan coba lagi.");
           setIsSpinning(false);
@@ -797,7 +797,7 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* --- MODAL KONFIRMASI (DOORPRIZE & AWARDS) --- */}
+      {/* --- MODAL KONFIRMASI (DOORPRIZE & AWARDS) - RECTANGULAR LAYOUT --- */}
       <AnimatePresence>
         {(pendingDoorprize || pendingAward) && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-y-auto">
@@ -809,47 +809,78 @@ export default function Home() {
               className="absolute z-0 w-[800px] h-[800px] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.2)_180deg,transparent_360deg)] rounded-full blur-3xl opacity-50 pointer-events-none transform-gpu will-change-transform"
             />
             
-            <motion.div initial={{ scale: 0.5, y: 100 }} animate={{ scale: 1, y: 0 }} className="bg-slate-900 border-2 border-yellow-500/50 p-6 md:p-8 rounded-[2rem] max-w-lg w-full text-center relative overflow-hidden shadow-[0_0_80px_rgba(234,179,8,0.3)] z-10 m-auto">
+            {/* MODAL CONTAINER - MODIFIED TO BE WIDER (PERSEGI PANJANG) */}
+            <motion.div 
+              initial={{ scale: 0.5, y: 100 }} 
+              animate={{ scale: 1, y: 0 }} 
+              className="bg-slate-900 border-2 border-yellow-500/50 p-6 md:p-10 rounded-[2rem] max-w-3xl w-full text-center relative overflow-hidden shadow-[0_0_80px_rgba(234,179,8,0.3)] z-10 m-auto"
+            >
               <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10"></div>
               <div className="relative z-10">
-                <div className="text-yellow-400 font-bold tracking-widest uppercase mb-4 animate-pulse text-xs md:text-sm">Konfirmasi Hasil</div>
+                <div className="text-yellow-400 font-bold tracking-widest uppercase mb-6 animate-pulse text-xs md:text-sm">Konfirmasi Hasil</div>
 
+                {/* --- DOORPRIZE CONFIRMATION --- */}
                 {pendingDoorprize && (
-                  <>
-                    <h2 className="text-3xl md:text-5xl font-black text-white mb-2 drop-shadow-md break-words">{pendingDoorprize.winner.name}</h2>
-                    <p className="text-slate-400 mb-6 text-sm md:text-base">Mendapatkan: <span className="text-cyan-400 font-bold">{pendingDoorprize.prize.name}</span></p>
-                    <div className="p-4 bg-slate-950/50 rounded-xl mb-8 border border-white/5">
-                      <p className="text-xs text-slate-500 mb-2">Preview Hadiah</p>
-                      {pendingDoorprize.prize.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={pendingDoorprize.prize.image_url} alt="" className="h-24 md:h-32 mx-auto rounded-lg object-contain" />
-                      ) : (
-                        <Gift className="mx-auto text-slate-600" size={48} />
-                      )}
+                  <div className="flex flex-col items-center justify-center">
+                    {/* Winner Name: Adjusted size to be prominent but not overwhelming */}
+                    <h2 className="text-3xl md:text-5xl font-black text-white mb-2 drop-shadow-md break-words w-full leading-tight">
+                        {pendingDoorprize.winner.name}
+                    </h2>
+                    <div className="h-1 w-24 bg-gradient-to-r from-transparent via-cyan-500 to-transparent my-4"></div>
+
+                    {/* Prize Info Container */}
+                    <div className="w-full bg-slate-950/50 rounded-2xl p-6 border border-white/5 mb-8 flex flex-col md:flex-row items-center gap-6 md:gap-8">
+                        {/* Prize Image */}
+                        <div className="w-full md:w-1/3 flex justify-center">
+                            {pendingDoorprize.prize.image_url ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={pendingDoorprize.prize.image_url} alt="" className="h-32 md:h-32 w-auto rounded-lg object-contain drop-shadow-lg" />
+                            ) : (
+                                <Gift className="text-slate-600" size={80} />
+                            )}
+                        </div>
+                        
+                        {/* Prize Text Details */}
+                        <div className="w-full md:w-2/3 text-center md:text-left">
+                           <p className="text-slate-400 text-sm mb-1 uppercase tracking-wider">Mendapatkan Hadiah:</p>
+                           <h3 className="text-2xl md:text-3xl font-bold text-cyan-400 leading-tight">
+                                {pendingDoorprize.prize.name}
+                           </h3>
+                        </div>
                     </div>
-                    <div className="flex flex-col sm:flex-row gap-3 md:gap-4">
-                      <button onClick={retryDoorprize} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base"><RotateCcw size={18} /> Spin Ulang</button>
-                      <button onClick={confirmDoorprizeWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-yellow-500 text-slate-900 hover:bg-yellow-400 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base"><Save size={18} /> SAH & SIMPAN</button>
+
+                    {/* Action Buttons */}
+                    <div className="flex flex-col sm:flex-row gap-4 w-full md:w-2/3 mx-auto">
+                      <button onClick={retryDoorprize} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base transition-all"><RotateCcw size={18} /> Spin Ulang</button>
+                      <button onClick={confirmDoorprizeWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-gradient-to-r from-yellow-500 to-yellow-400 text-slate-900 hover:scale-105 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base transition-all"><Save size={18} /> SAH & SIMPAN</button>
                     </div>
-                  </>
+                  </div>
                 )}
 
+                {/* --- AWARDS CONFIRMATION --- */}
                 {pendingAward && (
-                  <>
-                    <div className="w-16 h-16 md:w-20 md:h-20 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-yellow-500/50 shadow-[0_0_30px_rgba(234,179,8,0.4)]">
-                      <Crown className="text-yellow-400" size={32} />
+                  <div className="flex flex-col items-center">
+                    <div className="flex items-center gap-3 mb-4">
+                        <Crown className="text-yellow-400" size={32} />
+                        <h3 className="text-xl md:text-2xl text-yellow-200">{pendingAward.winner.category}</h3>
                     </div>
-                    <h3 className="text-lg md:text-xl text-yellow-200 mb-1">{pendingAward.winner.category}</h3>
-                    <div className="text-xs text-yellow-500/70 font-bold uppercase tracking-wider mb-4">JUARA {pendingAward.winner.rank}</div>
                     
-                    <h2 className="text-3xl md:text-5xl font-black text-white mb-2 drop-shadow-lg break-words">{pendingAward.winner.name}</h2>
-                    <p className="text-slate-400 mb-8 text-base md:text-lg break-words">{pendingAward.winner.company}</p>
-
-                    <div className="flex flex-col sm:flex-row gap-3 md:gap-4">
-                      <button onClick={retryAward} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base"><RotateCcw size={18} /> Batal</button>
-                      <button onClick={confirmAwardWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-yellow-500 text-slate-900 hover:bg-yellow-400 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base"><Save size={18} /> SAH & REVEAL</button>
+                    <div className="inline-block px-4 py-1 bg-yellow-500/20 border border-yellow-500/40 rounded-full text-xs md:text-sm text-yellow-400 font-bold uppercase tracking-wider mb-6">
+                        JUARA {pendingAward.winner.rank}
                     </div>
-                  </>
+                    
+                    {/* Winner Name - Adjusted Size */}
+                    <h2 className="text-3xl md:text-5xl font-black text-white mb-3 drop-shadow-lg break-words w-full leading-tight">
+                        {pendingAward.winner.name}
+                    </h2>
+                    {/* Company Removed here */}
+                    <div className="mb-10"></div> 
+
+                    <div className="flex flex-col sm:flex-row gap-4 w-full md:w-2/3 mx-auto">
+                      <button onClick={retryAward} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base transition-all"><RotateCcw size={18} /> Batal</button>
+                      <button onClick={confirmAwardWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-gradient-to-r from-yellow-500 to-yellow-400 text-slate-900 hover:scale-105 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base transition-all"><Save size={18} /> SAH & REVEAL</button>
+                    </div>
+                  </div>
                 )}
               </div>
             </motion.div>
@@ -876,7 +907,7 @@ export default function Home() {
                         <tr className="text-xs text-slate-400 uppercase tracking-wider border-b border-white/10">
                         <th className="py-4 px-2 md:px-4 font-semibold w-12 md:w-16">No</th>
                         <th className="py-4 px-2 md:px-4 font-semibold">Nama Kandidat</th>
-                        {view === "awards" && <th className="py-4 px-2 md:px-4 font-semibold">Instansi/Perusahaan</th>}
+                        {/* Company Column Header Removed */}
                         </tr>
                     </thead>
                     <tbody className="text-sm">
@@ -884,13 +915,11 @@ export default function Home() {
                         <tr key={p.id} className="hover:bg-white/5 border-b border-white/5 last:border-0 transition-colors group">
                             <td className="py-3 px-2 md:px-4 text-slate-500 font-mono group-hover:text-blue-400 transition-colors">{i + 1}</td>
                             <td className="py-3 px-2 md:px-4 font-medium text-slate-200 group-hover:text-white">{p.name}</td>
-                            {view === "awards" && (
-                            <td className="py-3 px-2 md:px-4 text-slate-400">{(p as AwardNominee).company}</td>
-                            )}
+                            {/* Company Column Cell Removed */}
                         </tr>
                         ))}
                         {modalData.length === 0 && (
-                        <tr><td colSpan={view === "awards" ? 3 : 2} className="text-center py-12 text-slate-500">Database Kosong</td></tr>
+                        <tr><td colSpan={2} className="text-center py-12 text-slate-500">Database Kosong</td></tr>
                         )}
                     </tbody>
                     </table>
@@ -1073,7 +1102,6 @@ export default function Home() {
                             <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-black text-white leading-[1.1] md:leading-[0.9] mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-yellow-100 to-yellow-500 drop-shadow-lg break-words">
                               {revealedAwardWinner.name}
                             </h1>
-                            <p className="text-lg md:text-3xl text-slate-400 font-light tracking-wide mb-8 break-words">{revealedAwardWinner.company}</p>
 
                             <div className="h-px w-full bg-gradient-to-r from-yellow-500/50 to-transparent mb-8"></div>
 
@@ -1134,14 +1162,14 @@ export default function Home() {
                                 <div className="inline-block px-6 py-2 bg-slate-800/80 rounded-full border border-white/10 text-xl font-bold text-white mb-8 shadow-lg backdrop-blur-sm">
                                    {categoryName}
                                 </div>
-                                
+                                 
                                 <div className="flex flex-wrap items-end justify-center gap-4 md:gap-8 min-h-[350px]">
                                     {/* RANK 2 */}
                                     {rank2 && (
                                       <div className="flex flex-col items-center order-2 md:order-1">
                                           <div className="text-center mb-3">
                                             <div className="text-white font-bold text-sm md:text-base">{rank2.name}</div>
-                                            <div className="text-slate-400 text-xs">{rank2.company}</div>
+                                            {/* Company removed */}
                                           </div>
                                           <div className="w-24 md:w-32 h-32 md:h-48 bg-gradient-to-t from-slate-700/80 to-slate-500/20 border-t border-x border-slate-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_30px_rgba(148,163,184,0.1)]">
                                             <div className="absolute top-0 left-0 right-0 h-1 bg-white/20"></div>
@@ -1158,7 +1186,7 @@ export default function Home() {
                                       <div className="flex flex-col items-center order-1 md:order-2 z-10">
                                           <div className="text-center mb-16 relative z-20">
                                             <div className="text-yellow-300 font-bold text-lg md:text-xl drop-shadow-md">{rank1.name}</div>
-                                            <div className="text-yellow-500/80 text-sm">{rank1.company}</div>
+                                            {/* Company removed */}
                                           </div>
                                           <div className="w-28 md:w-40 h-40 md:h-64 bg-gradient-to-t from-yellow-700/80 to-yellow-500/20 border-t border-x border-yellow-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_50px_rgba(234,179,8,0.3)]">
                                             <div className="absolute top-0 left-0 right-0 h-1 bg-yellow-200/40"></div>
@@ -1178,7 +1206,7 @@ export default function Home() {
                                       <div className="flex flex-col items-center order-3">
                                           <div className="text-center mb-3">
                                             <div className="text-white font-bold text-sm md:text-base">{rank3.name}</div>
-                                            <div className="text-slate-400 text-xs">{rank3.company}</div>
+                                            {/* Company removed */}
                                           </div>
                                           <div className="w-24 md:w-32 h-24 md:h-36 bg-gradient-to-t from-orange-800/80 to-orange-600/20 border-t border-x border-orange-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_30px_rgba(194,65,12,0.1)]">
                                             <div className="absolute top-0 left-0 right-0 h-1 bg-white/20"></div>
@@ -1197,7 +1225,7 @@ export default function Home() {
                                                 <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">#{other.rank}</div>
                                                 <div>
                                                     <div className="text-sm font-bold text-slate-200">{other.name}</div>
-                                                    <div className="text-xs text-slate-500">{other.company}</div>
+                                                    {/* Company removed */}
                                                 </div>
                                             </div>
                                         ))}

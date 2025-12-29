@@ -11,12 +11,15 @@ import {
   LogOut, User, LayoutDashboard, Users, Trophy, Gift, 
   Save, Plus, Trash2, Search, Edit3, 
   ChevronRight, Package, RefreshCw, Upload, 
-  AlertCircle, Image as ImageIcon, Sparkles, Menu, ArrowRight, Loader2,
+  AlertCircle, Image as ImageIcon, Menu, ArrowRight, Loader2,
   Clock, X, Key, Shuffle, Lock, Unlock, Power, Archive,
-  FileText, Download, FileSpreadsheet, Calendar
+  FileText, Download, FileSpreadsheet, Calendar, Star, Medal, Layers, ScanLine
 } from "lucide-react";
 import { onAuthStateChanged } from "firebase/auth";
 import { supabase } from "../lib/supabase"; 
+
+// --- GANTI TESSERACT DENGAN GEMINI ---
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // --- IMPORT UNTUK EXPORT DATA ---
 import * as XLSX from 'xlsx';
@@ -35,25 +38,27 @@ interface DoorprizeParticipant {
   name: string;
 }
 
-// Interface untuk pemenang doorprize (biasanya hasil dari spin)
 interface DoorprizeWinner {
     id: string;
     name: string;
-    wonAt?: unknown;
+    wonAt?: Timestamp;
     prizeName?: string;
 }
 
-interface RoyalCandidate {
+// AwardNominee (Single Input Logic)
+interface AwardNominee {
   id: string;
-  name: string;
-  company: string;
+  name: string;    // Disamakan dengan company
+  company: string; // Input Utama (Nama PT/Costumer)
 }
 
-interface RoyalParticipant {
+// AwardWinnerSlot
+interface AwardWinnerSlot {
   id: string;
   rank: number;
   candidateId: string; 
-  title: string;
+  category: string; 
+  eventLabel?: string; // New: Untuk membedakan tanggal/sesi event
 }
 
 interface Prize {
@@ -69,12 +74,35 @@ interface ArchivedSession {
     label: string;
 }
 
-interface RoyalWinner {
+interface AwardWinnerHistory {
     id?: string;
     name: string;
     company: string;
     rank: number;
-    title: string;
+    category: string;
+    eventLabel?: string;
+    title?: string;
+}
+
+type TabType = "dashboard" | "doorprize" | "award-nominees" | "awards" | "prizes" | "recap";
+
+// --- HELPER UNTUK GEMINI ---
+async function fileToGenerativePart(file: File) {
+    return new Promise<{ inlineData: { data: string; mimeType: string } }>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const base64String = reader.result as string;
+            const base64Data = base64String.split(',')[1];
+            resolve({
+                inlineData: {
+                    data: base64Data,
+                    mimeType: file.type,
+                },
+            });
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
 }
 
 export default function PanelPage() {
@@ -84,7 +112,7 @@ export default function PanelPage() {
   const router = useRouter();
 
   // --- UI STATE ---
-  const [activeTab, setActiveTab] = useState<"dashboard" | "doorprize" | "royal-candidates" | "royal" | "prizes" | "recap">("dashboard");
+  const [activeTab, setActiveTab] = useState<TabType>("dashboard");
   const [isSaving, setIsSaving] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false); 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true); 
@@ -92,23 +120,25 @@ export default function PanelPage() {
   // --- DATA STATES ---
   const [doorprizeParticipants, setDoorprizeParticipants] = useState<DoorprizeParticipant[]>([]);
   const [doorprizeWinners, setDoorprizeWinners] = useState<DoorprizeWinner[]>([]); 
-  const [royalCandidates, setRoyalCandidates] = useState<RoyalCandidate[]>([]);
-  const [royalParticipants, setRoyalParticipants] = useState<RoyalParticipant[]>([]);
+      
+  const [awardNominees, setAwardNominees] = useState<AwardNominee[]>([]);
+  const [awardWinners, setAwardWinners] = useState<AwardWinnerSlot[]>([]);
+      
   const [prizes, setPrizes] = useState<Prize[]>([]);
-    
+        
   // --- HISTORY / RECAP STATE ---
   const [historySessions, setHistorySessions] = useState<ArchivedSession[]>([]);
-  const [selectedSession, setSelectedSession] = useState<string>("active"); // 'active' or doc ID
+  const [selectedSession, setSelectedSession] = useState<string>("active"); 
 
   // --- SCHEDULE, PASSCODE & STATUS STATES ---
   const [doorprizeSchedule, setDoorprizeSchedule] = useState("");
-  const [royalSchedule, setRoyalSchedule] = useState("");
+  const [awardSchedule, setAwardSchedule] = useState(""); 
   const [doorprizePasscode, setDoorprizePasscode] = useState("");
-  const [royalPasscode, setRoyalPasscode] = useState("");
-     
+  const [awardPasscode, setAwardPasscode] = useState(""); 
+        
   // New Status States
   const [doorprizeStatus, setDoorprizeStatus] = useState<"open" | "closed">("closed");
-  const [royalStatus, setRoyalStatus] = useState<"open" | "closed">("closed");
+  const [awardStatus, setAwardStatus] = useState<"open" | "closed">("closed");
 
   const [searchQuery, setSearchQuery] = useState("");
   const [editingPrize, setEditingPrize] = useState<Prize | null>(null);
@@ -116,7 +146,7 @@ export default function PanelPage() {
 
   // --- RESPONSIVE CHECK & AUTH LOGIC ---
   useEffect(() => {
-    // Auto-close sidebar on mobile initial load
+    // Auto-close sidebar on mobile/tablet load
     if (typeof window !== "undefined" && window.innerWidth < 1024) {
       setIsSidebarOpen(false);
     } 
@@ -160,14 +190,12 @@ export default function PanelPage() {
   };
 
   // --- FETCH HELPER: GET HISTORY LIST ---
-  // Gunakan useCallback untuk menghindari re-render loop
   const fetchHistorySessions = useCallback(async () => {
       try {
           const q = query(collection(db, "archived_sessions"), orderBy("archivedAt", "desc"));
           const snapshot = await getDocs(q);
           const sessions: ArchivedSession[] = snapshot.docs.map(doc => {
               const data = doc.data();
-              // Format Timestamp
               let dateLabel = "Unknown Date";
               if (data.archivedAt?.toDate) {
                   dateLabel = data.archivedAt.toDate().toLocaleString('id-ID', {
@@ -187,7 +215,6 @@ export default function PanelPage() {
   }, []);
 
   // --- FETCH DATA FUNCTIONS ---
-  // Gunakan useCallback untuk menghindari re-render loop
   const fetchSchedulesAndPasscodes = useCallback(async () => {
     try {
         const docRef = doc(db, "settings", "config");
@@ -195,20 +222,18 @@ export default function PanelPage() {
         if (docSnap.exists()) {
             const data = docSnap.data();
             if (data.doorprizeStart) setDoorprizeSchedule(data.doorprizeStart);
-            if (data.royalStart) setRoyalSchedule(data.royalStart);
+            if (data.awardStart) setAwardSchedule(data.awardStart); 
             if (data.doorprizePasscode) setDoorprizePasscode(data.doorprizePasscode);
-            if (data.royalPasscode) setRoyalPasscode(data.royalPasscode);
+            if (data.awardPasscode) setAwardPasscode(data.awardPasscode); 
             
-            // Fetch Status
             if (data.doorprizeStatus) setDoorprizeStatus(data.doorprizeStatus);
-            if (data.royalStatus) setRoyalStatus(data.royalStatus);
+            if (data.awardStatus) setAwardStatus(data.awardStatus); 
         }
     } catch (error) {
         console.error("Error fetching settings:", error);
     }
   }, []);
 
-  // Gunakan useCallback untuk menghindari re-render loop
   const fetchDoorprizeParticipants = useCallback(async () => {
     try {
       const q = query(collection(db, "doorprize_participants"));
@@ -223,8 +248,6 @@ export default function PanelPage() {
     }
   }, []);
 
-  // FETCH Doorprize Winners (Active or Selected History)
-  // Gunakan useCallback untuk menghindari re-render loop
   const fetchDoorprizeWinners = useCallback(async () => {
     try {
         if (selectedSession === "active") {
@@ -256,28 +279,34 @@ export default function PanelPage() {
     }
   }, [selectedSession]);
 
-  // --- FETCH ROYAL DATA (SMART FETCH FOR HISTORY) ---
-  // Gunakan useCallback untuk menghindari re-render loop
-  const fetchRoyalData = useCallback(async () => {
+  // --- FETCH AWARD DATA ---
+  const fetchAwardData = useCallback(async () => {
     try {
         if (selectedSession === "active") {
-            // 1. Fetch Candidates Aktif
-            const qC = query(collection(db, "royal_candidates"));
+            // 1. Fetch Nominees
+            const qC = query(collection(db, "award_nominees"));
             const snapC = await getDocs(qC);
-            const cData: RoyalCandidate[] = snapC.docs.map((doc) => ({
+            const cData: AwardNominee[] = snapC.docs.map((doc) => ({
                 id: doc.id,
-                ...(doc.data() as Omit<RoyalCandidate, "id">),
+                ...(doc.data() as Omit<AwardNominee, "id">),
             }));
-            setRoyalCandidates(cData);
+            setAwardNominees(cData);
 
-            // 2. Fetch Participants Aktif
-            const qP = query(collection(db, "royal_participants"));
+            // 2. Fetch Winners (Slots)
+            const qP = query(collection(db, "award_winners"));
             const snapP = await getDocs(qP);
-            const pData: RoyalParticipant[] = snapP.docs.map((doc) => ({
+            const pData: AwardWinnerSlot[] = snapP.docs.map((doc) => ({
                 id: doc.id,
-                ...(doc.data() as Omit<RoyalParticipant, "id">),
+                ...(doc.data() as Omit<AwardWinnerSlot, "id">),
             }));
-            setRoyalParticipants(pData.sort((a, b) => a.rank - b.rank));
+            // Sort by eventLabel, then category, then rank
+            setAwardWinners(pData.sort((a, b) => {
+                if ((a.eventLabel || "Main") < (b.eventLabel || "Main")) return -1;
+                if ((a.eventLabel || "Main") > (b.eventLabel || "Main")) return 1;
+                if (a.category < b.category) return -1;
+                if (a.category > b.category) return 1;
+                return a.rank - b.rank;
+            }));
 
         } else {
             // HISTORY MODE
@@ -287,54 +316,59 @@ export default function PanelPage() {
             if (docSnap.exists()) {
                 const sessionData = docSnap.data().sessionData;
                 
-                // PRIORITAS 1: Gunakan royal_winners jika ada
-                if (sessionData && sessionData.royal_winners && sessionData.royal_winners.length > 0) {
-                    
-                    const winners = sessionData.royal_winners;
-                    
-                    const syntheticCandidates: RoyalCandidate[] = winners.map((w: RoyalWinner, index: number) => ({
+                const histWinners = sessionData.award_history_winners || sessionData.royal_winners || [];
+
+                if (histWinners.length > 0) {
+                    const syntheticNominees: AwardNominee[] = histWinners.map((w: AwardWinnerHistory, index: number) => ({
                         id: `hist_c_${index}`,
                         name: w.name,
                         company: w.company
                     }));
 
-                    const syntheticParticipants: RoyalParticipant[] = winners.map((w: RoyalWinner, index: number) => ({
+                    const syntheticWinners: AwardWinnerSlot[] = histWinners.map((w: AwardWinnerHistory, index: number) => ({
                         id: `hist_p_${index}`,
                         rank: w.rank,
                         candidateId: `hist_c_${index}`, 
-                        title: w.title
+                        category: w.category || w.title || "Uncategorized",
+                        eventLabel: w.eventLabel || "Archived"
                     }));
 
-                    setRoyalCandidates(syntheticCandidates);
-                    setRoyalParticipants(syntheticParticipants.sort((a, b) => a.rank - b.rank));
+                    setAwardNominees(syntheticNominees);
+                    setAwardWinners(syntheticWinners.sort((a, b) => a.rank - b.rank));
 
-                } else if (sessionData && sessionData.royal_slots) {
-                    // PRIORITAS 2: Legacy fallback
-                    const sData = sessionData.royal_slots.map((s: RoyalParticipant, idx: number) => ({
-                        ...s, id: s.id || `hist_p_${idx}`
-                    }));
+                } else if (sessionData.award_winners || sessionData.royal_slots) {
+                    const rawSlots = sessionData.award_winners || sessionData.royal_slots;
                     
-                    let cData: RoyalCandidate[] = [];
-                    if(sessionData.royal_candidates) {
-                        cData = sessionData.royal_candidates.map((c: RoyalCandidate, idx: number) => ({
+                    const sData = rawSlots.map((s: Partial<AwardWinnerSlot>, idx: number) => ({
+                        ...s, 
+                        id: s.id || `hist_p_${idx}`,
+                        rank: s.rank || 1,
+                        candidateId: s.candidateId || "",
+                        category: s.category || "Unknown",
+                        eventLabel: s.eventLabel || "Archived"
+                    })) as AwardWinnerSlot[];
+                    
+                    let cData: AwardNominee[] = [];
+                    const rawNominees = sessionData.award_nominees || sessionData.royal_candidates;
+                    if(rawNominees) {
+                        cData = rawNominees.map((c: AwardNominee, idx: number) => ({
                             ...c, id: c.id || `hist_c_fallback_${idx}` 
                         }));
                     }
 
-                    setRoyalParticipants(sData.sort((a: RoyalParticipant, b: RoyalParticipant) => a.rank - b.rank));
-                    setRoyalCandidates(cData);
+                    setAwardWinners(sData.sort((a, b) => a.rank - b.rank));
+                    setAwardNominees(cData);
                 } else {
-                    setRoyalParticipants([]);
-                    setRoyalCandidates([]);
+                    setAwardWinners([]);
+                    setAwardNominees([]);
                 }
             }
         }
     } catch (error) {
-        console.error("Error fetching royal data:", error);
+        console.error("Error fetching award data:", error);
     }
   }, [selectedSession]);
 
-  // Gunakan useCallback untuk menghindari re-render loop
   const fetchPrizes = useCallback(async () => {
     try {
       const q = query(collection(db, "prizes"));
@@ -353,45 +387,45 @@ export default function PanelPage() {
   useEffect(() => {
     fetchSchedulesAndPasscodes(); // Always fetch settings
     
-    // Reset session to active if not in recap to avoid editing confusion
+    // Reset session to active if not in recap
     if (activeTab !== 'recap' && activeTab !== 'dashboard') {
         if(selectedSession !== 'active') setSelectedSession('active');
     }
 
     if (activeTab === "recap") {
-        fetchHistorySessions(); // Load list of available dates
+        fetchHistorySessions(); 
         fetchDoorprizeWinners();
-        fetchRoyalData(); // Menggabungkan Participants & Candidates
+        fetchAwardData(); 
     } 
     else if (activeTab === "doorprize") {
       fetchDoorprizeParticipants();
-    } else if (activeTab === "royal-candidates") {
-      fetchRoyalData();
-    } else if (activeTab === "royal") {
-      fetchRoyalData();
+    } else if (activeTab === "award-nominees") {
+      fetchAwardData();
+    } else if (activeTab === "awards") {
+      fetchAwardData();
     } else if (activeTab === "prizes") {
       fetchPrizes();
     } else if (activeTab === "dashboard") {
        fetchDoorprizeParticipants();
-       fetchRoyalData();
+       fetchAwardData();
        fetchPrizes();
        if(selectedSession === 'active') fetchDoorprizeWinners(); 
     }
-  }, [activeTab, fetchDoorprizeWinners, fetchRoyalData, selectedSession, fetchSchedulesAndPasscodes, fetchHistorySessions, fetchDoorprizeParticipants, fetchPrizes]);
+  }, [activeTab, fetchDoorprizeWinners, fetchAwardData, selectedSession, fetchSchedulesAndPasscodes, fetchHistorySessions, fetchDoorprizeParticipants, fetchPrizes]);
 
-  // --- HANDLER SETTINGS (Schedule, Passcode, Status) ---
-  const handleSaveSchedule = async (type: "doorprize" | "royal", value: string) => {
+  // --- HANDLER SETTINGS ---
+  const handleSaveSchedule = async (type: "doorprize" | "award", value: string) => {
     setIsSaving(true);
     try {
         const docRef = doc(db, "settings", "config");
         await setDoc(docRef, { 
-            [type === "doorprize" ? "doorprizeStart" : "royalStart"]: value 
+            [type === "doorprize" ? "doorprizeStart" : "awardStart"]: value 
         }, { merge: true });
         
         if (type === "doorprize") setDoorprizeSchedule(value);
-        else setRoyalSchedule(value);
+        else setAwardSchedule(value);
         
-        alert(`Jadwal ${type} berhasil disimpan!`);
+        alert(`Jadwal ${type === 'award' ? 'Awards' : 'Doorprize'} berhasil disimpan!`);
     } catch (error) {
         console.error("Error saving schedule:", error);
         alert("Gagal menyimpan jadwal.");
@@ -400,18 +434,18 @@ export default function PanelPage() {
     }
   };
 
-  const handleSavePasscode = async (type: "doorprize" | "royal", value: string) => {
+  const handleSavePasscode = async (type: "doorprize" | "award", value: string) => {
     setIsSaving(true);
     try {
         const docRef = doc(db, "settings", "config");
         await setDoc(docRef, { 
-            [type === "doorprize" ? "doorprizePasscode" : "royalPasscode"]: value 
+            [type === "doorprize" ? "doorprizePasscode" : "awardPasscode"]: value 
         }, { merge: true });
         
         if (type === "doorprize") setDoorprizePasscode(value);
-        else setRoyalPasscode(value);
+        else setAwardPasscode(value);
         
-        alert(`Passcode ${type} berhasil disimpan!`);
+        alert(`Passcode ${type === 'award' ? 'Awards' : 'Doorprize'} berhasil disimpan!`);
     } catch (error) {
         console.error("Error saving passcode:", error);
         alert("Gagal menyimpan passcode.");
@@ -420,17 +454,17 @@ export default function PanelPage() {
     }
   };
 
-  const handleToggleStatus = async (type: "doorprize" | "royal", currentStatus: "open" | "closed") => {
+  const handleToggleStatus = async (type: "doorprize" | "award", currentStatus: "open" | "closed") => {
     const newStatus = currentStatus === "open" ? "closed" : "open";
     setIsSaving(true);
     try {
         const docRef = doc(db, "settings", "config");
         await setDoc(docRef, {
-            [type === "doorprize" ? "doorprizeStatus" : "royalStatus"]: newStatus
+            [type === "doorprize" ? "doorprizeStatus" : "awardStatus"]: newStatus
         }, { merge: true });
 
         if (type === "doorprize") setDoorprizeStatus(newStatus);
-        else setRoyalStatus(newStatus);
+        else setAwardStatus(newStatus);
 
     } catch (error) {
         console.error("Error toggling status:", error);
@@ -461,80 +495,171 @@ export default function PanelPage() {
     }
   };
 
-  // --- HANDLERS FOR ROYAL CANDIDATES ---
-  const handleAddRoyalCandidate = async (name: string, company: string) => {
-    if (!name || !company) return;
+  // NEW: Handler Bulk Delete Doorprize
+  const handleBulkDeleteDoorprize = async (ids: string[]) => {
+      setIsSaving(true);
+      try {
+          const batch = writeBatch(db);
+          ids.forEach(id => {
+              const ref = doc(db, "doorprize_participants", id);
+              batch.delete(ref);
+          });
+          await batch.commit();
+          fetchDoorprizeParticipants();
+      } catch (error) {
+          console.error("Error bulk delete doorprize:", error);
+          alert("Gagal menghapus data terpilih.");
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
+  // --- HANDLERS FOR AWARD NOMINEES ---
+  const handleAddAwardNominee = async (singleName: string) => {
+    if (!singleName) return;
     try {
-      const newRef = doc(collection(db, "royal_candidates"));
-      await setDoc(newRef, { name, company });
-      fetchRoyalData();
+      const newRef = doc(collection(db, "award_nominees"));
+      // Simpan input sebagai nama company (utama) dan nama customer (copy) agar fleksibel
+      await setDoc(newRef, { name: singleName, company: singleName });
+      fetchAwardData();
     } catch (error) {
-      console.error("Error adding royal candidate:", error);
+      console.error("Error adding nominee:", error);
     }
   };
 
-  const handleUpdateRoyalCandidate = async (updated: RoyalCandidate) => {
+  // NEW HANDLER FOR BULK ADD FROM IMAGE SCAN
+  const handleBulkAddNominees = async (names: string[]) => {
+      setIsSaving(true);
+      try {
+          const batch = writeBatch(db);
+          names.forEach(name => {
+              const newRef = doc(collection(db, "award_nominees"));
+              batch.set(newRef, { name: name, company: name });
+          });
+          await batch.commit();
+          fetchAwardData();
+          alert(`${names.length} Data berhasil diimport!`);
+      } catch (error) {
+          console.error("Error bulk adding:", error);
+          alert("Gagal menyimpan data bulk.");
+      } finally {
+          setIsSaving(false);
+      }
+  }
+
+  const handleUpdateAwardNominee = async (updated: AwardNominee) => {
     try {
       const { id, ...data } = updated;
-      await updateDoc(doc(db, "royal_candidates", id), data);
-      fetchRoyalData();
+      await updateDoc(doc(db, "award_nominees", id), data);
+      fetchAwardData();
     } catch (error) {
-      console.error("Error updating royal candidate:", error);
+      console.error("Error updating nominee:", error);
     }
   };
 
-  const handleDeleteRoyalCandidate = async (id: string) => {
+  const handleDeleteAwardNominee = async (id: string) => {
     try {
-      await deleteDoc(doc(db, "royal_candidates", id));
-      fetchRoyalData();
+      await deleteDoc(doc(db, "award_nominees", id));
+      fetchAwardData();
     } catch (error) {
-      console.error("Error deleting royal candidate:", error);
+      console.error("Error deleting nominee:", error);
     }
   };
 
-  // --- HANDLERS FOR ROYAL PARTICIPANTS ---
-  const handleUpdateRoyalParticipant = async (updated: RoyalParticipant) => {
+  // NEW: Handler Bulk Delete Nominees
+  const handleBulkDeleteNominees = async (ids: string[]) => {
+      setIsSaving(true);
+      try {
+          const batch = writeBatch(db);
+          ids.forEach(id => {
+              const ref = doc(db, "award_nominees", id);
+              batch.delete(ref);
+          });
+          await batch.commit();
+          fetchAwardData();
+      } catch (error) {
+          console.error("Error bulk delete nominees:", error);
+          alert("Gagal menghapus data terpilih.");
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
+  // --- HANDLERS FOR AWARDS ---
+  const handleUpdateAwardWinner = async (updated: AwardWinnerSlot) => {
     try {
       const { id, ...data } = updated;
-      await updateDoc(doc(db, "royal_participants", id), data);
-      fetchRoyalData();
+      await updateDoc(doc(db, "award_winners", id), data);
+      fetchAwardData();
     } catch (error) {
-      console.error("Error updating royal participant:", error);
+      console.error("Error updating award winner:", error);
     }
   };
 
-  const handleInitializeRoyal = async () => {
-    if(!confirm("Apakah Anda yakin ingin membuat/reset 6 slot kosong untuk pemenang?")) return;
+  const handleInitializeAwards = async () => {
+    if(!confirm("Apakah Anda yakin ingin membuat/reset default categories (Top Spender, Most Loyal, Rising Star)?")) return;
     setIsSaving(true);
     try {
-        // Create 6 slots
-        for(let i=1; i<=6; i++) {
-            const newRef = doc(collection(db, "royal_participants"));
-            await setDoc(newRef, {
-                rank: i,
-                candidateId: "",
-                title: ""
-            });
+        const categories = [
+            "Top Spender",
+            "The Most Loyal Customer",
+            "Rising Star"
+        ];
+
+        for(const category of categories) {
+            for(let rank = 1; rank <= 3; rank++) {
+                const newRef = doc(collection(db, "award_winners"));
+                await setDoc(newRef, {
+                    rank: rank,
+                    candidateId: "",
+                    category: category,
+                    eventLabel: "Main Event"
+                });
+            }
         }
-        await fetchRoyalData();
-        alert("Berhasil membuat 6 slot pemenang!");
+        await fetchAwardData();
+        alert("Berhasil inisialisasi default!");
     } catch (error) {
-        console.error("Error initializing royal:", error);
-        alert("Gagal inisialisasi data.");
+        console.error("Error initializing awards:", error);
     } finally {
         setIsSaving(false);
     }
   }
 
-  const handleSaveRoyal = async () => {
+  // NEW: Add Single Award Category manually with Event Label Logic
+  const handleManualAddAward = async (categoryName: string, slotCount: number, eventLabel: string) => {
+     if(!categoryName || slotCount < 1) return;
+     const finalLabel = eventLabel || "Main Event";
+     setIsSaving(true);
+     try {
+         for(let rank = 1; rank <= slotCount; rank++) {
+            const newRef = doc(collection(db, "award_winners"));
+            await setDoc(newRef, {
+                rank: rank,
+                candidateId: "",
+                category: categoryName,
+                eventLabel: finalLabel
+            });
+         }
+         await fetchAwardData();
+         alert(`Nominasi "${categoryName}" berhasil ditambahkan ke Jadwal "${finalLabel}"!`);
+     } catch (error) {
+         console.error("Error adding category:", error);
+         alert("Gagal menambah kategori.");
+     } finally {
+         setIsSaving(false);
+     }
+  }
+
+  const handleSaveAwards = async () => {
     setIsSaving(true);
     try {
-      for (const participant of royalParticipants) {
-        await handleUpdateRoyalParticipant(participant);
+      for (const winner of awardWinners) {
+        await handleUpdateAwardWinner(winner);
       }
-      alert("Perubahan berhasil disimpan");
+      alert("Perubahan awards berhasil disimpan");
     } catch (error) {
-      console.error("Error saving royal data:", error);
+      console.error("Error saving awards data:", error);
     } finally {
       setIsSaving(false);
     }
@@ -615,30 +740,56 @@ export default function PanelPage() {
 
   // --- ARCHIVE AND RESET LOGIC ---
   const handleArchiveAndReset = async () => {
-    if(!confirm("PERINGATAN: Aksi ini akan mengarsipkan (memisahkan) data sesi saat ini dan me-reset sistem untuk sesi baru. Data lama tidak dihapus permanen, tapi akan dipindah ke arsip. Lanjutkan?")) return;
+    if(!confirm("PERINGATAN: Aksi ini akan mengarsipkan data sesi saat ini dan me-reset sistem untuk sesi baru.\n\nNOTE: Nominee yang belum menang TIDAK akan dihapus.")) return;
 
     setIsSaving(true);
     try {
         const batch = writeBatch(db);
 
         // 1. Fetch data yang akan diarsipkan
-        // (Doorprize Participants, Royal Candidates, Royal Slots, Winners)
         const dpPartSnap = await getDocs(collection(db, "doorprize_participants"));
-        const royalCandSnap = await getDocs(collection(db, "royal_candidates"));
-        const royalSlotSnap = await getDocs(collection(db, "royal_participants"));
+        const awardNomSnap = await getDocs(collection(db, "award_nominees"));
+        const awardWinSnap = await getDocs(collection(db, "award_winners"));
         const dpWinnersSnap = await getDocs(collection(db, "doorprize_winners")); 
-        const royalWinnersSnap = await getDocs(collection(db, "royal_winners"));
+        
+        // --- ADDED: Fetch Award History to reset spin sessions ---
+        const awardHistorySnap = await getDocs(collection(db, "award_history"));
+
+        // --- IDENTIFIKASI PEMENANG AWARD ---
+        // Kita butuh ID nominee yang menang agar bisa dihapus. Yang kalah tetap disimpan.
+        const winningCandidateIds = new Set<string>();
+        awardWinSnap.docs.forEach(doc => {
+            const data = doc.data() as AwardWinnerSlot;
+            if (data.candidateId && data.candidateId.trim() !== "") {
+                winningCandidateIds.add(data.candidateId);
+            }
+        });
+        
+        // Buat data history winners yang komplit untuk arsip
+        const nominees = awardNomSnap.docs.map(d => ({...d.data(), id: d.id} as AwardNominee));
+        const historyWinners = awardWinSnap.docs.map(d => {
+            const data = d.data() as AwardWinnerSlot;
+            const nominee = nominees.find(n => n.id === data.candidateId);
+            return {
+                name: nominee ? nominee.name : "-",
+                company: nominee ? nominee.company : "-",
+                rank: data.rank,
+                category: data.category,
+                eventLabel: data.eventLabel || "Main Event"
+            }
+        });
 
         const archiveData = {
             archivedAt: serverTimestamp(),
             archivedBy: userData?.email,
             sessionData: {
                 doorprize_participants: dpPartSnap.docs.map(d => d.data()),
-                // FIXED: Simpan ID kandidat agar relasi tidak putus di arsip masa depan
-                royal_candidates: royalCandSnap.docs.map(d => ({ ...d.data(), id: d.id })),
-                royal_slots: royalSlotSnap.docs.map(d => d.data()),
+                award_nominees: nominees,
+                award_winners: awardWinSnap.docs.map(d => d.data()),
+                award_history_winners: historyWinners,
                 doorprize_winners: dpWinnersSnap.docs.map(d => d.data()),
-                royal_winners: royalWinnersSnap.docs.map(d => d.data())
+                // Archive the award history log as well
+                award_history_log: awardHistorySnap.docs.map(d => d.data())
             }
         };
 
@@ -648,46 +799,43 @@ export default function PanelPage() {
 
         // 3. Reset/Bersihkan Koleksi Aktif
         
-        // Hapus Peserta Doorprize
-        dpPartSnap.docs.forEach((doc) => {
-            batch.delete(doc.ref);
-        });
+        // Hapus Peserta Doorprize (Selalu dihapus karena per sesi)
+        dpPartSnap.docs.forEach((doc) => batch.delete(doc.ref));
 
-        // Hapus Kandidat Royal
-        royalCandSnap.docs.forEach((doc) => {
-            batch.delete(doc.ref);
+        // Hapus Nominees (KONDISIONAL: Hapus HANYA jika mereka MENANG)
+        awardNomSnap.docs.forEach((doc) => {
+            if (winningCandidateIds.has(doc.id)) {
+                // Hapus pemenang dari daftar nominees aktif agar tidak muncul lagi
+                batch.delete(doc.ref);
+            }
+            // Nominee yang kalah (tidak ada di winningCandidateIds) DIBIARKAN (tidak di-delete)
         });
 
         // Hapus Pemenang Doorprize
-        dpWinnersSnap.docs.forEach((doc) => {
-            batch.delete(doc.ref);
+        dpWinnersSnap.docs.forEach((doc) => batch.delete(doc.ref));
+
+        // --- ADDED: Hapus Award History (Reset Spin Session) ---
+        awardHistorySnap.docs.forEach((doc) => batch.delete(doc.ref));
+
+        // Reset Award Winners (Slots) - Kosongkan candidateId
+        awardWinSnap.docs.forEach((doc) => {
+            batch.update(doc.ref, { candidateId: "" });
         });
 
-        // Hapus Pemenang Royal (History)
-        royalWinnersSnap.docs.forEach((doc) => {
-            batch.delete(doc.ref);
-        });
-
-        // Reset Royal Participants (Slots) - Jangan dihapus dokumennya, tapi kosongkan isinya
-        royalSlotSnap.docs.forEach((doc) => {
-            batch.update(doc.ref, { candidateId: "", title: "" });
-        });
-
-        // Reset Status Session ke Closed (Opsional, demi keamanan)
+        // Reset Status Session ke Closed
         const configRef = doc(db, "settings", "config");
-        batch.update(configRef, { doorprizeStatus: "closed", royalStatus: "closed" });
+        batch.update(configRef, { doorprizeStatus: "closed", awardStatus: "closed" });
 
         await batch.commit();
 
         // 4. Refresh Local Data
         fetchDoorprizeParticipants();
-        fetchRoyalData();
+        fetchAwardData();
         fetchSchedulesAndPasscodes();
         
-        // Refresh history list if in recap
         if(activeTab === 'recap') fetchHistorySessions();
 
-        alert("Sesi berhasil diarsipkan dan di-reset!");
+        alert("Sesi berhasil diarsipkan! Pemenang telah dihapus dari daftar nominasi, peserta lain tetap disimpan.");
 
     } catch (error) {
         console.error("Error archiving session:", error);
@@ -702,8 +850,8 @@ export default function PanelPage() {
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const filteredRoyalCandidates = royalCandidates.filter((p) =>
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.company.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredAwardNominees = awardNominees.filter((p) =>
+    p.company.toLowerCase().includes(searchQuery.toLowerCase()) || p.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // --- RENDER LOADING ---
@@ -736,12 +884,12 @@ export default function PanelPage() {
         )}
       </AnimatePresence>
 
-      {/* SIDEBAR - RESPONSIVE */}
+      {/* SIDEBAR - FULLY RESPONSIVE */}
       <aside 
-        className={`bg-white border-r border-slate-200 flex flex-col fixed h-full z-[50] transition-transform duration-300 ease-in-out
+        className={`bg-white border-r border-slate-200 flex flex-col fixed h-full z-[50] transition-all duration-300 ease-in-out
             ${isSidebarOpen 
-                ? "translate-x-0 w-[80%] max-w-[280px]" // Responsive width on mobile
-                : "-translate-x-full lg:translate-x-0 lg:w-20" // Closed: Hide on mobile, Mini on desktop
+                ? "translate-x-0 w-[280px]" 
+                : "-translate-x-full lg:translate-x-0 lg:w-20"
             }
         `}
       >
@@ -753,7 +901,6 @@ export default function PanelPage() {
             Panel Admin
           </span>
           
-          {/* Close button on mobile only */}
           <button 
              onClick={() => setIsSidebarOpen(false)}
              className="lg:hidden absolute right-4 text-slate-400 hover:text-slate-600 p-2"
@@ -778,17 +925,17 @@ export default function PanelPage() {
             expanded={isSidebarOpen}
           />
           <SidebarItem 
-            active={activeTab === "royal-candidates"} 
-            onClick={() => { setActiveTab("royal-candidates"); if(typeof window !== 'undefined' && window.innerWidth < 1024) setIsSidebarOpen(false); }} 
+            active={activeTab === "award-nominees"} 
+            onClick={() => { setActiveTab("award-nominees"); if(typeof window !== 'undefined' && window.innerWidth < 1024) setIsSidebarOpen(false); }} 
             icon={<Users size={20} />} 
-            label="Royal Candidates" 
+            label="Award Nominees" 
             expanded={isSidebarOpen}
           />
           <SidebarItem 
-            active={activeTab === "royal"} 
-            onClick={() => { setActiveTab("royal"); if(typeof window !== 'undefined' && window.innerWidth < 1024) setIsSidebarOpen(false); }} 
-            icon={<Trophy size={20} />} 
-            label="Royal Top 6" 
+            active={activeTab === "awards"} 
+            onClick={() => { setActiveTab("awards"); if(typeof window !== 'undefined' && window.innerWidth < 1024) setIsSidebarOpen(false); }} 
+            icon={<Medal size={20} />} 
+            label="Awards" 
             expanded={isSidebarOpen}
           />
           <SidebarItem 
@@ -836,16 +983,16 @@ export default function PanelPage() {
         {/* HEADER */}
         <header className="flex justify-between items-center mb-8 relative z-30">
           <div className="flex items-center gap-3 md:gap-4">
-             <button 
+              <button 
                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
                className="p-2 hover:bg-slate-200 rounded-lg transition-colors text-slate-500"
-             >
+              >
                 <Menu size={24} />
-             </button>
-             <div className="overflow-hidden">
+              </button>
+              <div className="overflow-hidden">
                 <h1 className="text-lg md:text-2xl font-bold text-slate-800 capitalize truncate">{activeTab.replace('-', ' ')}</h1>
                 <p className="text-slate-500 text-xs md:text-sm hidden sm:block truncate">Welcome back, {userData.email}</p>
-             </div>
+              </div>
           </div>
           
           <div className="flex items-center gap-4">
@@ -905,8 +1052,8 @@ export default function PanelPage() {
           >
             {activeTab === "dashboard" && <DashboardView 
                 doorprizeCount={doorprizeParticipants.length} 
-                royalCandidateCount={royalCandidates.length} 
-                royalCount={royalParticipants.length} 
+                awardNomineeCount={awardNominees.length} 
+                awardWinnerCount={awardWinners.filter(w => w.candidateId).length} 
                 prizeCount={prizes.reduce((acc, p) => acc + p.stock, 0)} 
                 setActiveTab={setActiveTab}
                 onResetSession={handleArchiveAndReset}
@@ -918,6 +1065,7 @@ export default function PanelPage() {
               setSearchQuery={setSearchQuery} 
               onAdd={handleAddDoorprizeParticipant} 
               onDelete={handleDeleteDoorprizeParticipant} 
+              onBulkDelete={handleBulkDeleteDoorprize}
               schedule={doorprizeSchedule}
               onSaveSchedule={(val) => handleSaveSchedule("doorprize", val)}
               passcode={doorprizePasscode}
@@ -926,27 +1074,30 @@ export default function PanelPage() {
               onToggleStatus={() => handleToggleStatus("doorprize", doorprizeStatus)}
               isSaving={isSaving}
             />}
-            {activeTab === "royal-candidates" && <RoyalCandidatesView 
-              candidates={filteredRoyalCandidates} 
+            {activeTab === "award-nominees" && <AwardNomineesView 
+              nominees={filteredAwardNominees} 
               searchQuery={searchQuery} 
               setSearchQuery={setSearchQuery} 
-              onAdd={handleAddRoyalCandidate} 
-              onUpdate={handleUpdateRoyalCandidate} 
-              onDelete={handleDeleteRoyalCandidate} 
+              onAdd={handleAddAwardNominee} 
+              onUpdate={handleUpdateAwardNominee} 
+              onDelete={handleDeleteAwardNominee} 
+              onBulkDelete={handleBulkDeleteNominees}
+              onBulkAdd={handleBulkAddNominees}
             />}
-            {activeTab === "royal" && <RoyalView 
-              participants={royalParticipants} 
-              setParticipants={setRoyalParticipants} 
-              candidates={royalCandidates} 
-              onSave={handleSaveRoyal} 
+            {activeTab === "awards" && <AwardsView 
+              winners={awardWinners} 
+              setWinners={setAwardWinners} 
+              nominees={awardNominees} 
+              onSave={handleSaveAwards} 
               isSaving={isSaving} 
-              onInitialize={handleInitializeRoyal}
-              schedule={royalSchedule}
-              onSaveSchedule={(val) => handleSaveSchedule("royal", val)}
-              passcode={royalPasscode}
-              onSavePasscode={(val) => handleSavePasscode("royal", val)}
-              status={royalStatus}
-              onToggleStatus={() => handleToggleStatus("royal", royalStatus)}
+              onInitialize={handleInitializeAwards}
+              onAddManual={handleManualAddAward}
+              schedule={awardSchedule}
+              onSaveSchedule={(val) => handleSaveSchedule("award", val)}
+              passcode={awardPasscode}
+              onSavePasscode={(val) => handleSavePasscode("award", val)}
+              status={awardStatus}
+              onToggleStatus={() => handleToggleStatus("award", awardStatus)}
             />}
             {activeTab === "prizes" && <PrizesView 
               prizes={prizes} 
@@ -963,8 +1114,8 @@ export default function PanelPage() {
             />}
             {activeTab === "recap" && <RecapView
               doorprizeWinners={doorprizeWinners}
-              royalParticipants={royalParticipants}
-              royalCandidates={royalCandidates}
+              awardWinners={awardWinners}
+              awardNominees={awardNominees}
               historySessions={historySessions}
               selectedSession={selectedSession}
               setSelectedSession={setSelectedSession}
@@ -1007,11 +1158,11 @@ function SidebarItem({ active, onClick, icon, label, expanded }: { active: boole
 }
 
 function DashboardView({ 
-    doorprizeCount, royalCandidateCount, royalCount, prizeCount, setActiveTab, onResetSession, isResetting 
+    doorprizeCount, awardNomineeCount, awardWinnerCount, prizeCount, setActiveTab, onResetSession, isResetting 
 }: { 
-    doorprizeCount: number, royalCandidateCount: number, royalCount: number, prizeCount: number, setActiveTab: (tab: "dashboard" | "doorprize" | "royal-candidates" | "royal" | "prizes" | "recap") => void, onResetSession: () => void, isResetting: boolean
+    doorprizeCount: number, awardNomineeCount: number, awardWinnerCount: number, prizeCount: number, setActiveTab: (tab: TabType) => void, onResetSession: () => void, isResetting: boolean
 }) {
-  
+    
   return (
     <div className="space-y-8">
       {/* Welcome Banner */}
@@ -1019,13 +1170,13 @@ function DashboardView({
         <div className="relative z-10 max-w-2xl">
             <h2 className="text-2xl md:text-4xl font-black mb-4">Dashboard Overview</h2>
             <p className="text-blue-100 text-sm md:text-lg mb-8 leading-relaxed">
-                Kelola semua data acara dari satu tempat. Pantau statistik peserta, kandidat royal, dan inventori hadiah secara realtime.
+                Kelola semua data acara dari satu tempat. Pantau statistik peserta, nominasi award, dan inventori hadiah secara realtime.
             </p>
-            <div className="flex gap-3">
-                <button onClick={() => setActiveTab('doorprize')} className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold hover:bg-blue-50 transition-colors flex items-center gap-2 shadow-sm text-sm md:text-base">
+            <div className="flex flex-col sm:flex-row gap-3">
+                <button onClick={() => setActiveTab('doorprize')} className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold hover:bg-blue-50 transition-colors flex items-center justify-center sm:justify-start gap-2 shadow-sm text-sm md:text-base">
                     Kelola Peserta <ArrowRight size={18}/>
                 </button>
-                <button onClick={() => setActiveTab('recap')} className="bg-white/20 text-white border border-white/30 px-6 py-3 rounded-xl font-bold hover:bg-white/30 transition-colors flex items-center gap-2 shadow-sm text-sm md:text-base">
+                <button onClick={() => setActiveTab('recap')} className="bg-white/20 text-white border border-white/30 px-6 py-3 rounded-xl font-bold hover:bg-white/30 transition-colors flex items-center justify-center sm:justify-start gap-2 shadow-sm text-sm md:text-base">
                     Lihat Rekap <FileText size={18}/>
                 </button>
             </div>
@@ -1045,18 +1196,18 @@ function DashboardView({
             desc="Total Data Masuk"
         />
         <StatCard 
-            icon={<Sparkles size={24} />} 
+            icon={<Star size={24} />} 
             color="bg-yellow-50 text-yellow-600" 
-            label="Royal Candidates" 
-            value={royalCandidateCount}
+            label="Award Nominees" 
+            value={awardNomineeCount}
             desc="Kandidat Terdaftar"
         />
         <StatCard 
-            icon={<Trophy size={24} />} 
+            icon={<Medal size={24} />} 
             color="bg-purple-50 text-purple-600" 
-            label="Royal Winners" 
-            value={royalCount}
-            desc="Top 6 Rank"
+            label="Award Winners" 
+            value={awardWinnerCount}
+            desc="Slot Terisi"
         />
         <StatCard 
             icon={<Gift size={24} />} 
@@ -1073,10 +1224,10 @@ function DashboardView({
                 <AlertCircle size={20} className="text-blue-500"/> Informasi Sistem
             </h3>
             <div className="text-slate-500 text-sm space-y-2">
-                <p>• Gunakan menu <span className="font-bold text-slate-700">Royal Top 6</span> untuk mengatur ranking pemenang setelah voting selesai.</p>
+                <p>• Gunakan menu <span className="font-bold text-slate-700">Awards</span> untuk menentukan Top 3 pemenang per kategori.</p>
                 <p>• Gambar pada stok hadiah akan otomatis menyesuaikan ukuran kartu (auto-fill).</p>
-                <p>• Gunakan generator passcode untuk keamanan halaman spin.</p>
-                <p>• <strong>Fitur Baru:</strong> Gunakan tombol status Open/Closed untuk mengontrol akses peserta.</p>
+                <p>• Gunakan generator passcode untuk keamanan halaman spin/award.</p>
+                <p>• <strong>Fitur Baru:</strong> Anda bisa menambahkan kategori untuk Event/Tanggal berbeda di menu Awards.</p>
                 <p>• <strong>Rekap:</strong> Data pemenang dapat diunduh ke Excel atau PDF pada menu Rekap.</p>
             </div>
         </div>
@@ -1117,270 +1268,13 @@ function StatCard({ icon, color, label, value, desc }: { icon: React.ReactNode, 
     )
 }
 
-function RecapView({ 
-    doorprizeWinners, 
-    royalParticipants,
-    royalCandidates,
-    historySessions,
-    selectedSession,
-    setSelectedSession
-}: { 
-    doorprizeWinners: DoorprizeWinner[],
-    royalParticipants: RoyalParticipant[],
-    royalCandidates: RoyalCandidate[],
-    historySessions: ArchivedSession[],
-    selectedSession: string,
-    setSelectedSession: (id: string) => void
-}) {
-    
-    // Helper to get Royal Winner Name
-    const getRoyalName = (candidateId: string) => {
-        const c = royalCandidates.find(rc => rc.id === candidateId);
-        return c ? `${c.name} (${c.company})` : "Belum ditentukan";
-    };
-
-    const getRoyalRawData = () => {
-        return royalParticipants.filter(p => p.candidateId).map(p => {
-            const candidate = royalCandidates.find(c => c.id === p.candidateId);
-            return {
-                Rank: p.rank,
-                Title: p.title,
-                Name: candidate?.name || "-",
-                Company: candidate?.company || "-"
-            };
-        });
-    };
-
-    const getDoorprizeRawData = () => {
-        return doorprizeWinners.map((w, i) => ({
-            No: i + 1,
-            Name: w.name,
-            Prize: w.prizeName || "Hadiah Doorprize"
-        }));
-    };
-
-    // --- EXPORT FUNCTIONS ---
-
-    const exportToExcel = () => {
-        const wb = XLSX.utils.book_new();
-        
-        // Sheet 1: Royal Winners
-        const royalData = getRoyalRawData();
-        const wsRoyal = XLSX.utils.json_to_sheet(royalData);
-        XLSX.utils.book_append_sheet(wb, wsRoyal, "Royal Top 6");
-
-        // Sheet 2: Doorprize Winners
-        const doorprizeData = getDoorprizeRawData();
-        const wsDoorprize = XLSX.utils.json_to_sheet(doorprizeData);
-        XLSX.utils.book_append_sheet(wb, wsDoorprize, "Doorprize Winners");
-
-        XLSX.writeFile(wb, "Rekap_Pemenang_Acara.xlsx");
-    };
-
-    const exportToCSV = () => {
-        // Simple CSV export for currently active view (combining logic slightly for simplicity)
-        const royalData = getRoyalRawData();
-        const doorprizeData = getDoorprizeRawData();
-
-        let csvContent = "data:text/csv;charset=utf-8,";
-        
-        csvContent += "ROYAL TOP 6\n";
-        csvContent += "Rank,Title,Name,Company\n";
-        royalData.forEach(row => {
-            csvContent += `${row.Rank},"${row.Title}","${row.Name}","${row.Company}"\n`;
-        });
-
-        csvContent += "\nDOORPRIZE WINNERS\n";
-        csvContent += "No,Name,Prize\n";
-        doorprizeData.forEach(row => {
-            csvContent += `${row.No},"${row.Name}","${row.Prize}"\n`;
-        });
-
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "rekap_data.csv");
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    };
-
-    const exportToPDF = () => {
-        type JsPDFWithAutoTable = jsPDF & {
-          lastAutoTable?: {
-            finalY: number;
-          };
-        };
-        const doc = new jsPDF() as JsPDFWithAutoTable;
-
-        doc.setFontSize(18);
-        doc.text("Laporan Rekap Pemenang Acara", 14, 22);
-
-        doc.setFontSize(11);
-        doc.text(`Dicetak pada: ${new Date().toLocaleString()}`, 14, 30);
-
-        // Royal Table
-        doc.setFontSize(14);
-        doc.text("Royal Top 6", 14, 45);
-
-        const royalData = getRoyalRawData().map(r => [
-            r.Rank,
-            r.Title,
-            r.Name,
-            r.Company
-        ]);
-
-        autoTable(doc, {
-            startY: 50,
-            head: [["Rank", "Title", "Name", "Company"]],
-            body: royalData,
-            theme: "grid",
-            headStyles: { fillColor: [59, 130, 246] }
-        });
-
-        // Doorprize Table
-        const finalY = (doc.lastAutoTable?.finalY ?? 50) + 20;
-
-        doc.text("Pemenang Doorprize", 14, finalY);
-
-        const doorprizeData = getDoorprizeRawData().map(d => [
-            d.No,
-            d.Name,
-            d.Prize
-        ]);
-
-        autoTable(doc, {
-            startY: finalY + 5,
-            head: [["No", "Nama Pemenang", "Hadiah"]],
-            body: doorprizeData,
-            theme: "grid",
-            headStyles: { fillColor: [234, 179, 8] }
-        });
-
-        doc.save("rekap_pemenang.pdf");
-    };
-
-    return (
-        <div className="space-y-8">
-            <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-100 gap-4">
-                <div className="flex flex-col sm:flex-row gap-6 w-full xl:w-auto">
-                    <div>
-                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                            <FileText className="text-blue-600"/> Rekap & Download
-                        </h3>
-                        <p className="text-slate-500 text-sm">Lihat history dan unduh data pemenang.</p>
-                    </div>
-                    
-                    {/* DROPDOWN FILTER HISTORY */}
-                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center gap-3">
-                          <div className="bg-white p-2 rounded-lg shadow-sm text-slate-500">
-                            <Calendar size={18} />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Pilih Tanggal Sesi</label>
-                            <select 
-                                value={selectedSession} 
-                                onChange={(e) => setSelectedSession(e.target.value)}
-                                className="bg-transparent font-bold text-slate-700 outline-none text-sm min-w-[200px]"
-                            >
-                                <option value="active">Sesi Aktif (Current)</option>
-                                <option disabled>─── Arsip / History ───</option>
-                                {historySessions.map(sess => (
-                                    <option key={sess.id} value={sess.id}>
-                                        {sess.label}
-                                    </option>
-                                ))}
-                            </select>
-                          </div>
-                    </div>
-                </div>
-
-                <div className="flex flex-wrap gap-3 w-full xl:w-auto">
-                    <button onClick={exportToCSV} className="flex-1 xl:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-sm flex items-center justify-center gap-2 transition-colors">
-                        <FileText size={16}/> CSV
-                    </button>
-                    <button onClick={exportToExcel} className="flex-1 xl:flex-none px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 font-bold rounded-lg text-sm flex items-center justify-center gap-2 transition-colors">
-                        <FileSpreadsheet size={16}/> Excel
-                    </button>
-                    <button onClick={exportToPDF} className="flex-1 xl:flex-none px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold rounded-lg text-sm flex items-center justify-center gap-2 transition-colors">
-                        <Download size={16}/> PDF
-                    </button>
-                </div>
-            </div>
-
-            <div className="grid lg:grid-cols-2 gap-8">
-                {/* TABLE ROYAL */}
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                    <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                        <h4 className="font-bold text-slate-700 flex items-center gap-2"><Trophy size={18} className="text-yellow-500"/> Royal Top 6</h4>
-                        <span className="bg-white px-2 py-1 rounded text-xs font-bold text-slate-500 border border-slate-200">{royalParticipants.filter(p => p.candidateId).length} Pemenang</span>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
-                            <thead className="bg-white text-slate-500 border-b border-slate-100">
-                                <tr>
-                                    <th className="px-4 py-3 font-bold w-12 text-center">Rank</th>
-                                    <th className="px-4 py-3 font-bold">Nama & PT</th>
-                                    <th className="px-4 py-3 font-bold">Title</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {royalParticipants.map((p) => (
-                                    <tr key={p.id} className="hover:bg-slate-50">
-                                        <td className="px-4 py-3 text-center font-black text-slate-700">#{p.rank}</td>
-                                        <td className="px-4 py-3 text-slate-700">{getRoyalName(p.candidateId)}</td>
-                                        <td className="px-4 py-3 text-slate-500 italic">{p.title || "-"}</td>
-                                    </tr>
-                                ))}
-                                {royalParticipants.length === 0 && (
-                                    <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-400">Belum ada data</td></tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                {/* TABLE DOORPRIZE */}
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                    <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                        <h4 className="font-bold text-slate-700 flex items-center gap-2"><Gift size={18} className="text-blue-500"/> Pemenang Doorprize</h4>
-                        <span className="bg-white px-2 py-1 rounded text-xs font-bold text-slate-500 border border-slate-200">{doorprizeWinners.length} Pemenang</span>
-                    </div>
-                    <div className="overflow-x-auto max-h-[500px]">
-                        <table className="w-full text-left text-sm">
-                            <thead className="bg-white text-slate-500 border-b border-slate-100 sticky top-0 z-10 shadow-sm">
-                                <tr>
-                                    <th className="px-4 py-3 font-bold w-12">No</th>
-                                    <th className="px-4 py-3 font-bold">Nama Pemenang</th>
-                                    <th className="px-4 py-3 font-bold">Hadiah</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {doorprizeWinners.map((w, i) => (
-                                    <tr key={w.id} className="hover:bg-slate-50">
-                                        <td className="px-4 py-3 text-slate-500 font-mono">{i + 1}</td>
-                                        <td className="px-4 py-3 font-medium text-slate-800">{w.name}</td>
-                                        <td className="px-4 py-3 text-blue-600">{w.prizeName || "Doorprize"}</td>
-                                    </tr>
-                                ))}
-                                {doorprizeWinners.length === 0 && (
-                                    <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-400">Belum ada pemenang</td></tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-    )
-}
-
 function DoorprizeView({ 
   participants, 
   searchQuery, 
   setSearchQuery, 
   onAdd, 
   onDelete,
+  onBulkDelete,
   schedule,
   onSaveSchedule,
   passcode,
@@ -1394,6 +1288,7 @@ function DoorprizeView({
   setSearchQuery: (q: string) => void, 
   onAdd: (name: string) => void, 
   onDelete: (id: string) => void,
+  onBulkDelete: (ids: string[]) => void,
   schedule: string,
   onSaveSchedule: (val: string) => void,
   passcode: string,
@@ -1405,6 +1300,9 @@ function DoorprizeView({
   const [newName, setNewName] = useState("");
   const [tempSchedule, setTempSchedule] = useState(schedule || "");
   const [tempPasscode, setTempPasscode] = useState(passcode || "");
+   
+  // MULTI SELECT STATE
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const handleSubmitAdd = () => {
     onAdd(newName);
@@ -1416,10 +1314,35 @@ function DoorprizeView({
     setTempPasscode(randomCode);
   }
 
+  // Handle Select All (for filtered items)
+  const handleSelectAll = () => {
+      if (selectedIds.length === participants.length) {
+          setSelectedIds([]);
+      } else {
+          setSelectedIds(participants.map(p => p.id));
+      }
+  };
+
+  // Handle Toggle One
+  const handleToggleSelect = (id: string) => {
+      if (selectedIds.includes(id)) {
+          setSelectedIds(selectedIds.filter(i => i !== id));
+      } else {
+          setSelectedIds([...selectedIds, id]);
+      }
+  };
+
+  const handleBulkDeleteAction = () => {
+      if (confirm(`Yakin ingin menghapus ${selectedIds.length} peserta terpilih?`)) {
+          onBulkDelete(selectedIds);
+          setSelectedIds([]);
+      }
+  };
+
   return (
     <div className="space-y-6">
         
-        {/* GRID LAYOUT FOR CONFIGURATION - FIXED FOR MACBOOK AIR (xl instead of lg) */}
+        {/* GRID LAYOUT FOR CONFIGURATION */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             
             {/* STATUS CARD */}
@@ -1449,7 +1372,7 @@ function DoorprizeView({
                 </button>
             </div>
 
-            {/* SCHEDULE CARD - UPDATED LAYOUT (Stacking Input/Button) */}
+            {/* SCHEDULE CARD */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col justify-between gap-4">
                 <div className="flex items-center gap-3">
                     <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
@@ -1460,7 +1383,6 @@ function DoorprizeView({
                         <p className="text-sm text-slate-500">Kapan sesi dimulai?</p>
                     </div>
                 </div>
-                {/* Fixed: Force flex-col to stack items vertically on ALL screens for this card */}
                 <div className="flex flex-col gap-2 mt-2">
                     <input 
                         type="datetime-local" 
@@ -1478,7 +1400,7 @@ function DoorprizeView({
                 </div>
             </div>
 
-            {/* PASSCODE CARD - UPDATED LAYOUT */}
+            {/* PASSCODE CARD */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col justify-between gap-4">
                 <div className="flex items-center gap-3">
                     <div className="p-3 bg-pink-50 text-pink-600 rounded-xl">
@@ -1521,15 +1443,27 @@ function DoorprizeView({
         {/* LIST CARD */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-4 md:p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4">
-            <div className="relative w-full md:w-auto">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-                type="text" 
-                placeholder="Cari peserta..." 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-slate-50 rounded-lg border-none focus:ring-2 focus:ring-blue-100 outline-none text-sm w-full md:w-64"
-            />
+            <div className="relative w-full md:w-auto flex items-center gap-2">
+                 {/* BULK DELETE BUTTON */}
+                 {selectedIds.length > 0 && (
+                     <button 
+                        onClick={handleBulkDeleteAction}
+                        className="px-3 py-2 bg-red-100 text-red-600 hover:bg-red-200 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors animate-in fade-in zoom-in duration-200"
+                     >
+                         <Trash2 size={16} /> Delete ({selectedIds.length})
+                     </button>
+                 )}
+                 
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                        type="text" 
+                        placeholder="Cari peserta..." 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-10 pr-4 py-2 bg-slate-50 rounded-lg border-none focus:ring-2 focus:ring-blue-100 outline-none text-sm w-full md:w-64"
+                    />
+                </div>
             </div>
             <div className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
             <input 
@@ -1558,6 +1492,14 @@ function DoorprizeView({
                 <table className="w-full text-left min-w-[500px]">
                 <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
                     <tr>
+                    <th className="px-6 py-4 w-10">
+                        <input 
+                            type="checkbox" 
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            checked={selectedIds.length === participants.length && participants.length > 0}
+                            onChange={handleSelectAll}
+                        />
+                    </th>
                     <th className="px-6 py-4 font-bold w-12">No</th>
                     <th className="px-6 py-4 font-bold">Nama Lengkap</th>
                     <th className="px-6 py-4 font-bold text-right">Aksi</th>
@@ -1565,7 +1507,15 @@ function DoorprizeView({
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                     {participants.map((p, i) => (
-                    <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                    <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${selectedIds.includes(p.id) ? 'bg-blue-50/50' : ''}`}>
+                        <td className="px-6 py-4">
+                             <input 
+                                type="checkbox" 
+                                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                checked={selectedIds.includes(p.id)}
+                                onChange={() => handleToggleSelect(p.id)}
+                            />
+                        </td>
                         <td className="px-6 py-4 text-slate-500 font-mono text-sm whitespace-nowrap">{i + 1}</td>
                         <td className="px-6 py-4 font-medium text-slate-700 whitespace-nowrap">{p.name}</td>
                         <td className="px-6 py-4 text-right whitespace-nowrap">
@@ -1584,75 +1534,181 @@ function DoorprizeView({
   );
 }
 
-function RoyalCandidatesView({ 
-  candidates, 
+function AwardNomineesView({ 
+  nominees, 
   searchQuery, 
   setSearchQuery, 
   onAdd, 
   onUpdate, 
-  onDelete 
+  onDelete,
+  onBulkDelete,
+  onBulkAdd
 }: { 
-  candidates: RoyalCandidate[], 
+  nominees: AwardNominee[], 
   searchQuery: string, 
   setSearchQuery: (q: string) => void, 
-  onAdd: (name: string, company: string) => void, 
-  onUpdate: (updated: RoyalCandidate) => void, 
-  onDelete: (id: string) => void 
+  onAdd: (singleName: string) => void, 
+  onUpdate: (updated: AwardNominee) => void, 
+  onDelete: (id: string) => void,
+  onBulkDelete: (ids: string[]) => void,
+  onBulkAdd: (names: string[]) => Promise<void>
 }) {
-  const [newName, setNewName] = useState("");
-  const [newCompany, setNewCompany] = useState("");
-  const [editingCandidate, setEditingCandidate] = useState<RoyalCandidate | null>(null);
+  const [newSingleName, setNewSingleName] = useState("");
+  const [editingNominee, setEditingNominee] = useState<AwardNominee | null>(null);
+   
+  // MULTI SELECT STATE
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // OCR States
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [scannedImage, setScannedImage] = useState<File | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scannedResults, setScannedResults] = useState<string[]>([]);
 
   const handleSubmitAdd = () => {
-    onAdd(newName, newCompany);
-    setNewName("");
-    setNewCompany("");
+    onAdd(newSingleName);
+    setNewSingleName("");
   };
 
-  const handleStartEdit = (candidate: RoyalCandidate) => {
-    setEditingCandidate(candidate);
+  const handleStartEdit = (nominee: AwardNominee) => {
+    setEditingNominee(nominee);
   };
 
-  const handleChangeEdit = (field: keyof RoyalCandidate, value: string) => {
-    if (editingCandidate) {
-      setEditingCandidate({ ...editingCandidate, [field]: value });
+  const handleChangeEdit = (value: string) => {
+    if (editingNominee) {
+      setEditingNominee({ ...editingNominee, name: value, company: value });
     }
   };
 
   const handleSubmitEdit = () => {
-    if (editingCandidate) {
-      onUpdate(editingCandidate);
-      setEditingCandidate(null);
+    if (editingNominee) {
+      onUpdate(editingNominee);
+      setEditingNominee(null);
     }
   };
+
+  // --- MULTI SELECT LOGIC ---
+  const handleSelectAll = () => {
+      if (selectedIds.length === nominees.length) {
+          setSelectedIds([]);
+      } else {
+          setSelectedIds(nominees.map(p => p.id));
+      }
+  };
+
+  const handleToggleSelect = (id: string) => {
+      if (selectedIds.includes(id)) {
+          setSelectedIds(selectedIds.filter(i => i !== id));
+      } else {
+          setSelectedIds([...selectedIds, id]);
+      }
+  };
+
+  const handleBulkDeleteAction = () => {
+      if (confirm(`Yakin ingin menghapus ${selectedIds.length} nominees terpilih?`)) {
+          onBulkDelete(selectedIds);
+          setSelectedIds([]);
+      }
+  };
+
+  // --- GEMINI OCR LOGIC START ---
+  const handleScanImage = async () => {
+      if (!scannedImage) return;
+      setIsScanning(true);
+      try {
+          // Inisialisasi Gemini (Pastikan API Key ada di .env.local: NEXT_PUBLIC_GEMINI_API_KEY)
+          const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
+          const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+
+          const imagePart = await fileToGenerativePart(scannedImage);
+
+          const prompt = `
+            Analisis gambar ini dan ekstrak daftar nama Customer atau nama PT/Perusahaan.
+            Abaikan:
+            - Header tabel
+            - Angka urutan (No)
+            - Tanggal
+            - Kata-kata kategori hadiah seperti "Top Spender", "The Most Loyal Customer", "Rising Star".
+
+            Keluarkan hasilnya HANYA sebagai JSON Array of Strings murni.
+            Contoh format output: ["PT. Sumber Makmur", "CV. Jaya Abadi", "Budi Santoso"]
+            Jangan gunakan markdown formatting (seperti \`\`\`json).
+          `;
+
+          const result = await model.generateContent([prompt, imagePart]);
+          const response = await result.response;
+          let text = response.text();
+          
+          // Bersihkan format markdown jika Gemini menambahkannya
+          text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+
+          const parsedNames = JSON.parse(text);
+
+          if (Array.isArray(parsedNames)) {
+              setScannedResults(parsedNames);
+          } else {
+              alert("Gagal memparsing hasil AI.");
+          }
+
+      } catch (error) {
+          console.error("Gemini OCR Error:", error);
+          alert("Gagal memindai gambar atau API Key tidak valid.");
+      } finally {
+          setIsScanning(false);
+      }
+  };
+
+  const handleSaveScannedNominees = async () => {
+      if (scannedResults.length === 0) return;
+      await onBulkAdd(scannedResults);
+      setScannedResults([]);
+      setScannedImage(null);
+      setIsImportModalOpen(false);
+  }
+  // --- OCR LOGIC END ---
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
       <div className="p-4 md:p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4">
-        <div className="relative w-full md:w-auto">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Cari kandidat..." 
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 pr-4 py-2 bg-slate-50 rounded-lg border-none focus:ring-2 focus:ring-blue-100 outline-none text-sm w-full md:w-64"
-          />
+        <div className="flex gap-2 w-full md:w-auto items-center">
+             {/* BULK DELETE BUTTON */}
+             {selectedIds.length > 0 && (
+                 <button 
+                    onClick={handleBulkDeleteAction}
+                    className="px-3 py-2 bg-red-100 text-red-600 hover:bg-red-200 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors animate-in fade-in zoom-in duration-200"
+                 >
+                     <Trash2 size={16} /> Delete ({selectedIds.length})
+                 </button>
+             )}
+
+             <div className="relative flex-1 md:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                    type="text" 
+                    placeholder="Cari nominee..." 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10 pr-4 py-2 bg-slate-50 rounded-lg border-none focus:ring-2 focus:ring-blue-100 outline-none text-sm w-full"
+                />
+            </div>
+            {/* BUTTON IMPORT IMAGE */}
+            <button 
+                onClick={() => setIsImportModalOpen(true)}
+                className="px-3 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors"
+                title="Import dari Gambar"
+            >
+                <ScanLine size={18} /> <span className="hidden sm:inline">Import Gambar</span>
+            </button>
         </div>
+
         <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
+          {/* Modified Input: Single Field for Customer/PT */}
           <input 
             type="text" 
-            placeholder="Nama Kandidat Baru" 
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            className="w-full md:w-auto px-4 py-2 bg-slate-50 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
-          />
-          <input 
-            type="text" 
-            placeholder="PT Asal" 
-            value={newCompany}
-            onChange={(e) => setNewCompany(e.target.value)}
-            className="w-full md:w-auto px-4 py-2 bg-slate-50 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
+            placeholder="Nama Costumer (PT/Perorangan)" 
+            value={newSingleName}
+            onChange={(e) => setNewSingleName(e.target.value)}
+            className="w-full md:w-64 px-4 py-2 bg-slate-50 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
           />
           <button onClick={handleSubmitAdd} className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors whitespace-nowrap">
             <Plus size={16} /> Tambah
@@ -1660,12 +1716,12 @@ function RoyalCandidatesView({
         </div>
       </div>
       
-      {candidates.length === 0 ? (
+      {nominees.length === 0 ? (
         <div className="p-10 flex flex-col items-center justify-center text-center">
             <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
                <Users className="text-slate-300 w-8 h-8" />
             </div>
-            <h3 className="text-slate-500 font-medium">Belum ada kandidat royal</h3>
+            <h3 className="text-slate-500 font-medium">Belum ada award nominees</h3>
             <p className="text-slate-400 text-sm">Mulai tambahkan kandidat untuk pemilihan</p>
         </div>
       ) : (
@@ -1673,18 +1729,33 @@ function RoyalCandidatesView({
             <table className="w-full text-left min-w-[600px]">
                 <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
                 <tr>
+                    <th className="px-6 py-4 w-10">
+                        <input 
+                            type="checkbox" 
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            checked={selectedIds.length === nominees.length && nominees.length > 0}
+                            onChange={handleSelectAll}
+                        />
+                    </th>
                     <th className="px-6 py-4 font-bold w-12">No</th>
-                    <th className="px-6 py-4 font-bold">Nama Lengkap</th>
-                    <th className="px-6 py-4 font-bold">PT Asal</th>
+                    <th className="px-6 py-4 font-bold">Nama Costumer (PT)</th>
                     <th className="px-6 py-4 font-bold text-right">Aksi</th>
                 </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                {candidates.map((c, i) => (
-                    <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                {nominees.map((c, i) => (
+                    <tr key={c.id} className={`hover:bg-slate-50 transition-colors ${selectedIds.includes(c.id) ? 'bg-blue-50/50' : ''}`}>
+                    <td className="px-6 py-4">
+                         <input 
+                            type="checkbox" 
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            checked={selectedIds.includes(c.id)}
+                            onChange={() => handleToggleSelect(c.id)}
+                        />
+                    </td>
                     <td className="px-6 py-4 text-slate-500 font-mono text-sm whitespace-nowrap">{i + 1}</td>
-                    <td className="px-6 py-4 font-medium text-slate-700 whitespace-nowrap">{c.name}</td>
-                    <td className="px-6 py-4 text-slate-700 whitespace-nowrap">{c.company}</td>
+                    {/* Display Company/Name from merged field */}
+                    <td className="px-6 py-4 font-medium text-slate-700 whitespace-nowrap">{c.company}</td>
                     <td className="px-6 py-4 text-right flex justify-end gap-2 whitespace-nowrap">
                         <button onClick={() => handleStartEdit(c)} className="p-2 text-slate-400 hover:text-blue-500 transition-colors">
                         <Edit3 size={16} />
@@ -1701,45 +1772,126 @@ function RoyalCandidatesView({
       )}
 
       {/* Edit Modal */}
-      {editingCandidate && (
+      {editingNominee && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white p-6 rounded-2xl max-w-md w-full shadow-2xl">
-            <h3 className="text-lg font-bold mb-4">Edit Kandidat</h3>
+            <h3 className="text-lg font-bold mb-4">Edit Nominee</h3>
             <div className="space-y-4 mb-6">
                 <div>
-                    <label className="text-xs font-bold text-slate-500 mb-1 block">Nama</label>
+                    <label className="text-xs font-bold text-slate-500 mb-1 block">Nama Costumer</label>
                     <input 
                     type="text" 
-                    value={editingCandidate.name} 
-                    onChange={(e) => handleChangeEdit("name", e.target.value)} 
-                    className="w-full p-2 bg-slate-50 border rounded-lg focus:outline-blue-500" 
-                    />
-                </div>
-                <div>
-                    <label className="text-xs font-bold text-slate-500 mb-1 block">Perusahaan</label>
-                    <input 
-                    type="text" 
-                    value={editingCandidate.company} 
-                    onChange={(e) => handleChangeEdit("company", e.target.value)} 
+                    value={editingNominee.company} 
+                    onChange={(e) => handleChangeEdit(e.target.value)} 
                     className="w-full p-2 bg-slate-50 border rounded-lg focus:outline-blue-500" 
                     />
                 </div>
             </div>
             <div className="flex gap-2">
               <button onClick={handleSubmitEdit} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Simpan</button>
-              <button onClick={() => setEditingCandidate(null)} className="flex-1 px-4 py-2 bg-slate-100 text-slate-600 rounded-lg font-bold">Batal</button>
+              <button onClick={() => setEditingNominee(null)} className="flex-1 px-4 py-2 bg-slate-100 text-slate-600 rounded-lg font-bold">Batal</button>
             </div>
           </div>
         </div>
       )}
+
+      {/* IMPORT IMAGE MODAL */}
+      <AnimatePresence>
+      {isImportModalOpen && (
+          <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+             <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
+             >
+                <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                    <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                        <ScanLine className="text-indigo-600" /> Import dari Gambar (AI)
+                    </h3>
+                    <button onClick={() => setIsImportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <div className="p-5 overflow-y-auto">
+                    {!scannedImage ? (
+                        <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 flex flex-col items-center justify-center text-center hover:bg-slate-50 transition-colors cursor-pointer relative">
+                            <input 
+                                type="file" 
+                                accept="image/*" 
+                                onChange={(e) => { if(e.target.files?.[0]) setScannedImage(e.target.files[0]) }}
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                            />
+                            <ImageIcon size={48} className="text-slate-300 mb-2"/>
+                            <p className="font-medium text-slate-600">Klik untuk upload gambar tabel</p>
+                            <p className="text-xs text-slate-400 mt-1">Format: JPG, PNG</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                <div className="p-2 bg-white rounded border border-slate-100">
+                                    <ImageIcon size={20} className="text-indigo-500" />
+                                </div>
+                                <span className="text-sm font-medium text-slate-700 truncate flex-1">{scannedImage.name}</span>
+                                <button onClick={() => { setScannedImage(null); setScannedResults([]); }} className="text-red-500 text-xs font-bold hover:underline">Ganti</button>
+                            </div>
+                            
+                            {isScanning ? (
+                                <div className="py-8 text-center space-y-3">
+                                    <Loader2 className="animate-spin mx-auto text-indigo-600" size={32} />
+                                    <p className="text-sm text-slate-500 font-medium">Sedang membaca teks dengan AI...</p>
+                                </div>
+                            ) : scannedResults.length > 0 ? (
+                                <div>
+                                    <p className="text-xs font-bold text-slate-500 mb-2 uppercase">Hasil Scan ({scannedResults.length} Nama)</p>
+                                    <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+                                        {scannedResults.map((res, idx) => (
+                                            <div key={idx} className="p-2 text-sm text-slate-700 bg-white px-3">
+                                                {res}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs text-slate-400 mt-2 italic">*Hanya kolom Nama Customer yang diambil.</p>
+                                </div>
+                            ) : (
+                                <div className="text-center py-4">
+                                    <button 
+                                        onClick={handleScanImage}
+                                        className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-lg shadow-indigo-200 transition-all"
+                                    >
+                                        Mulai Scan OCR
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-5 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                    <button onClick={() => setIsImportModalOpen(false)} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Batal</button>
+                    {scannedResults.length > 0 && (
+                        <button 
+                            onClick={handleSaveScannedNominees}
+                            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-md transition-colors"
+                        >
+                            Simpan ke Database
+                        </button>
+                    )}
+                </div>
+             </motion.div>
+          </div>
+      )}
+      </AnimatePresence>
+
     </div>
   );
 }
 
-function RoyalView({ 
-  participants, 
-  setParticipants, 
-  candidates, 
+function AwardsView({ 
+  winners, 
+  setWinners, 
+  nominees, 
   onSave, 
   isSaving,
   onInitialize,
@@ -1750,12 +1902,13 @@ function RoyalView({
   status,
   onToggleStatus
 }: { 
-  participants: RoyalParticipant[], 
-  setParticipants: (p: RoyalParticipant[]) => void, 
-  candidates: RoyalCandidate[], 
+  winners: AwardWinnerSlot[], 
+  setWinners: (p: AwardWinnerSlot[]) => void, 
+  nominees: AwardNominee[], 
   onSave: () => void, 
   isSaving: boolean,
   onInitialize: () => void,
+  onAddManual: (cat: string, slots: number, label: string) => void,
   schedule: string,
   onSaveSchedule: (val: string) => void,
   passcode: string,
@@ -1765,14 +1918,20 @@ function RoyalView({
 }) {
   const [tempSchedule, setTempSchedule] = useState(schedule || "");
   const [tempPasscode, setTempPasscode] = useState(passcode || "");
+    
+  // // State for adding manual category
+  // const [newCategoryName, setNewCategoryName] = useState("");
+  // // Default to 3 slots for Rank 1, 2, 3 as requested
+  // const [newSlotCount, setNewSlotCount] = useState(3); 
+  // const [newEventLabel, setNewEventLabel] = useState("");
 
-  const handleChange = (id: string, field: keyof RoyalParticipant, value: string | number) => {
-    setParticipants(participants.map(p => p.id === id ? { ...p, [field]: value } : p));
+  const handleChange = (id: string, field: keyof AwardWinnerSlot, value: string | number) => {
+    setWinners(winners.map(p => p.id === id ? { ...p, [field]: value } : p));
   };
 
-  const getCandidateName = (candidateId: string) => {
-    const candidate = candidates.find(c => c.id === candidateId);
-    return candidate ? candidate.name : "";
+  const getNomineeLabel = (candidateId: string) => {
+    const nominee = nominees.find(c => c.id === candidateId);
+    return nominee ? nominee.company : "";
   };
 
   const generatePasscode = () => {
@@ -1780,15 +1939,27 @@ function RoyalView({
     setTempPasscode(randomCode);
   }
 
-  if (participants.length === 0) {
+  // --- LOGIC PENYARINGAN DATA ---
+  // 1. Dapatkan Set ID kandidat yang sudah terpilih di slot manapun
+  const usedCandidateIds = new Set(winners.map(w => w.candidateId).filter(id => id));
+
+  // 1. Group winners by Event Label first
+  const groupedByEvent = winners.reduce((acc, curr) => {
+      const label = curr.eventLabel || "Main Event";
+      if (!acc[label]) acc[label] = [];
+      acc[label].push(curr);
+      return acc;
+  }, {} as Record<string, AwardWinnerSlot[]>);
+
+  if (winners.length === 0) {
       return (
           <div className="flex flex-col items-center justify-center min-h-[400px] bg-white rounded-3xl border border-dashed border-slate-300 text-center p-6">
               <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6">
                 <Trophy className="text-slate-300 w-10 h-10" />
               </div>
-              <h2 className="text-xl font-bold text-slate-800 mb-2">Belum ada data Royal Top 6</h2>
+              <h2 className="text-xl font-bold text-slate-800 mb-2">Belum ada kategori Award</h2>
               <p className="text-slate-500 text-center max-w-md mb-6">
-                  Meskipun kandidat sudah ada, Anda perlu membuat 6 slot pemenang terlebih dahulu agar bisa memilih siapa juaranya.
+                  Anda perlu inisialisasi 3 kategori (Top Spender, Most Loyal, Rising Star) terlebih dahulu.
               </p>
               <button 
                 onClick={onInitialize}
@@ -1796,7 +1967,7 @@ function RoyalView({
                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors flex items-center gap-2"
               >
                   {isSaving ? <Loader2 className="animate-spin"/> : <RefreshCw size={18} />}
-                  Inisialisasi / Reset Top 6
+                  Inisialisasi Kategori (Top 3)
               </button>
           </div>
       )
@@ -1804,45 +1975,45 @@ function RoyalView({
 
   return (
     <div className="space-y-6">
-       
-       {/* GRID LAYOUT FOR CONFIGURATION - FIXED FOR MACBOOK AIR (xl instead of lg) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            
-            {/* STATUS CARD */}
-            <div className={`rounded-2xl shadow-sm border p-6 flex flex-col justify-between gap-4 transition-colors ${status === 'open' ? 'bg-green-50 border-green-200' : 'bg-white border-slate-100'}`}>
-                <div className="flex items-center gap-3">
-                    <div className={`p-3 rounded-xl ${status === 'open' ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-600'}`}>
-                        {status === 'open' ? <Unlock size={24} /> : <Lock size={24} />}
-                    </div>
-                    <div>
-                        <h3 className={`font-bold ${status === 'open' ? 'text-green-800' : 'text-slate-800'}`}>Status Sesi</h3>
-                        <p className={`text-sm ${status === 'open' ? 'text-green-600' : 'text-slate-500'}`}>
-                            {status === 'open' ? "Sesi Sedang Aktif" : "Sesi Ditutup"}
-                        </p>
-                    </div>
-                </div>
-                <button 
-                    onClick={onToggleStatus}
-                    disabled={isSaving}
-                    className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
-                        status === 'open' 
-                        ? 'bg-white text-green-700 hover:bg-green-100 border border-green-200' 
-                        : 'bg-slate-800 text-white hover:bg-slate-900'
-                    }`}
-                >
-                    <Power size={16} />
-                    {status === 'open' ? "Tutup Sesi" : "Buka Sesi"}
-                </button>
-            </div>
+        
+       {/* CONFIGURATION SECTION - SEKARANG KONSISTEN DENGAN DOORPRIZE */}
+       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+           
+           {/* STATUS CARD */}
+           <div className={`rounded-2xl shadow-sm border p-6 flex flex-col justify-between gap-4 transition-colors ${status === 'open' ? 'bg-green-50 border-green-200' : 'bg-white border-slate-100'}`}>
+               <div className="flex items-center gap-3">
+                   <div className={`p-3 rounded-xl ${status === 'open' ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                       {status === 'open' ? <Unlock size={24} /> : <Lock size={24} />}
+                   </div>
+                   <div>
+                       <h3 className={`font-bold ${status === 'open' ? 'text-green-800' : 'text-slate-800'}`}>Status Sesi</h3>
+                       <p className={`text-sm ${status === 'open' ? 'text-green-600' : 'text-slate-500'}`}>
+                           {status === 'open' ? "Sesi Sedang Aktif" : "Sesi Ditutup"}
+                       </p>
+                   </div>
+               </div>
+               <button 
+                   onClick={onToggleStatus}
+                   disabled={isSaving}
+                   className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                       status === 'open' 
+                       ? 'bg-white text-green-700 hover:bg-green-100 border border-green-200' 
+                       : 'bg-slate-800 text-white hover:bg-slate-900'
+                   }`}
+               >
+                   <Power size={16} />
+                   {status === 'open' ? "Tutup Sesi" : "Buka Sesi"}
+               </button>
+           </div>
 
-            {/* SCHEDULE CARD - UPDATED LAYOUT */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col justify-between gap-4">
+           {/* SCHEDULE CARD */}
+           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col justify-between gap-4">
                 <div className="flex items-center gap-3">
-                    <div className="p-3 bg-yellow-50 text-yellow-600 rounded-xl">
+                    <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
                         <Clock size={24} />
                     </div>
                     <div>
-                        <h3 className="font-bold text-slate-800">Atur Jadwal Royal Top 6</h3>
+                        <h3 className="font-bold text-slate-800">Atur Jadwal Awards</h3>
                         <p className="text-sm text-slate-500">Kapan sesi dimulai?</p>
                     </div>
                 </div>
@@ -1863,7 +2034,7 @@ function RoyalView({
                 </div>
             </div>
 
-            {/* PASSCODE CARD - UPDATED LAYOUT */}
+            {/* PASSCODE CARD */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col justify-between gap-4">
                 <div className="flex items-center gap-3">
                     <div className="p-3 bg-pink-50 text-pink-600 rounded-xl">
@@ -1901,12 +2072,12 @@ function RoyalView({
                 </div>
             </div>
 
-        </div>
-
+       </div>
+       
       <div className="flex flex-col sm:flex-row justify-between items-center bg-yellow-50 p-4 rounded-xl border border-yellow-100 gap-4">
         <div className="flex items-center gap-3 text-center sm:text-left">
-            <div className="p-2 bg-yellow-100 rounded-lg text-yellow-600 hidden sm:block"><Trophy size={20} /></div>
-            <p className="text-sm text-yellow-800 font-medium">Pilih kandidat untuk top 6 dan atur detailnya.</p>
+            <div className="p-2 bg-yellow-100 rounded-lg text-yellow-600 hidden sm:block"><Medal size={20} /></div>
+            <p className="text-sm text-yellow-800 font-medium">Pilih pemenang untuk setiap kategori award.</p>
         </div>
         <button 
           onClick={onSave}
@@ -1917,50 +2088,75 @@ function RoyalView({
         </button>
       </div>
 
-      <div className="grid gap-4">
-        {participants.map((item) => (
-          <div key={item.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-start md:items-center">
-            <div className="w-12 h-12 bg-slate-800 text-white rounded-full flex items-center justify-center font-black text-xl shrink-0 shadow-md">
-              #{item.rank}
-            </div>
-            
-            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
-              <div>
-                <label className="text-xs text-slate-400 font-bold uppercase mb-1 block">Pilih Kandidat</label>
-                <select 
-                  value={item.candidateId || ""} 
-                  onChange={(e) => handleChange(item.id, "candidateId", e.target.value)} 
-                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 focus:outline-blue-500"
-                >
-                  <option value="">Pilih...</option>
-                  {candidates.map(c => (
-                    <option key={c.id} value={c.id}>{c.name} - {c.company}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 font-bold uppercase mb-1 block">Nama Pemenang</label>
-                <input 
-                  type="text" 
-                  value={getCandidateName(item.candidateId)} 
-                  disabled 
-                  className="w-full p-2 bg-slate-100 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700" 
-                />
-              </div>
-              <div className="sm:col-span-2 lg:col-span-1">
-                <label className="text-xs text-slate-400 font-bold uppercase mb-1 block">Title / Julukan</label>
-                <input 
-                  type="text" 
-                  value={item.title} 
-                  onChange={(e) => handleChange(item.id, "title", e.target.value)} 
-                  placeholder="Contoh: The Innovator"
-                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-blue-500" 
-                />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* RENDER GROUPED BY EVENT */}
+      {Object.entries(groupedByEvent).map(([eventLabel, eventWinners]) => {
+          // 2. Group by Category within this event
+          const groupedByCategory = eventWinners.reduce((acc, curr) => {
+             if (!acc[curr.category]) acc[curr.category] = [];
+             acc[curr.category].push(curr);
+             return acc;
+          }, {} as Record<string, AwardWinnerSlot[]>);
+
+          return (
+             <div key={eventLabel} className="space-y-4">
+                 <div className="flex items-center gap-2 px-2 pt-4">
+                     <Layers className="text-slate-400" size={18} />
+                     <h2 className="text-lg font-black text-slate-700 uppercase tracking-wide">{eventLabel}</h2>
+                     <div className="h-px bg-slate-200 flex-1"></div>
+                 </div>
+
+                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {Object.entries(groupedByCategory).map(([category, slots]) => (
+                        <div key={`${eventLabel}-${category}`} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                            <div className="bg-slate-50 p-4 border-b border-slate-100">
+                                <h3 className="font-bold text-slate-800 text-center">{category}</h3>
+                            </div>
+                            <div className="p-4 space-y-4 flex-1">
+                                {slots.sort((a,b) => a.rank - b.rank).map((slot) => (
+                                    <div key={slot.id} className="relative">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className={`text-xs font-black px-2 py-0.5 rounded text-white ${
+                                                slot.rank === 1 ? 'bg-yellow-500' : 
+                                                slot.rank === 2 ? 'bg-slate-400' : 
+                                                'bg-orange-400'
+                                            }`}>
+                                                JUARA {slot.rank}
+                                            </span>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <select 
+                                              value={slot.candidateId || ""} 
+                                              onChange={(e) => handleChange(slot.id, "candidateId", e.target.value)} 
+                                              className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 focus:outline-blue-500"
+                                            >
+                                              <option value="">-- Pilih Pemenang --</option>
+                                              {/* LOGIKA FILTER:
+                                                Tampilkan kandidat jika:
+                                                1. Belum digunakan di slot manapun (!usedCandidateIds.has(c.id))
+                                                2. ATAU kandidat ini adalah yang sedang terpilih di slot ini (c.id === slot.candidateId)
+                                              */}
+                                              {nominees
+                                                .filter(c => !usedCandidateIds.has(c.id) || c.id === slot.candidateId)
+                                                .map(c => (
+                                                  <option key={c.id} value={c.id}>{c.company}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                         {/* Read Only Preview */}
+                                         <div className="mt-1 px-2">
+                                              <p className="text-xs text-slate-400">
+                                                    Selected: <span className="font-bold text-slate-600">{getNomineeLabel(slot.candidateId) || "-"}</span>
+                                              </p>
+                                         </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                 </div>
+             </div>
+          );
+      })}
     </div>
   );
 }
@@ -2063,8 +2259,8 @@ function PrizesView({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {/* ADD NEW CARD (Styled as a button/action card) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {/* ADD NEW CARD */}
         <div className="bg-white p-5 rounded-2xl border-2 border-dashed border-slate-300 flex flex-col gap-3 group hover:border-blue-400 transition-colors">
             <h4 className="font-bold text-slate-700 flex items-center gap-2"><Plus className="bg-blue-100 text-blue-600 rounded-md p-0.5" size={20}/> Tambah Baru</h4>
             <div className="space-y-3 flex-1">
@@ -2093,7 +2289,6 @@ function PrizesView({
                   {newImageFile && <p className="text-xs text-slate-500 mt-1 truncate">{newImageFile.name}</p>}
                 </label>
             </div>
-            {/* BUTTON DENGAN STATUS LOADING */}
             <button 
               onClick={handleSubmitAdd} 
               disabled={isUploadingNew}
@@ -2166,7 +2361,6 @@ function PrizesView({
         )})}
       </div>
 
-      {/* Empty State for Prizes */}
       {prizes.length === 0 && (
           <div className="col-span-full py-10 flex flex-col items-center justify-center text-center opacity-50">
               <Package size={48} className="text-slate-300 mb-3" />
@@ -2199,4 +2393,264 @@ function PrizesView({
       )}
     </div>
   );
+}
+
+function RecapView({ 
+    doorprizeWinners, 
+    awardWinners,
+    awardNominees,
+    historySessions,
+    selectedSession,
+    setSelectedSession
+}: { 
+    doorprizeWinners: DoorprizeWinner[],
+    awardWinners: AwardWinnerSlot[],
+    awardNominees: AwardNominee[],
+    historySessions: ArchivedSession[],
+    selectedSession: string,
+    setSelectedSession: (id: string) => void
+}) {
+    
+    // Helper to get Award Winner Name
+    const getAwardName = (candidateId: string) => {
+        const c = awardNominees.find(rc => rc.id === candidateId);
+        return c ? c.company : "Belum ditentukan";
+    };
+
+    const getAwardRawData = () => {
+        return awardWinners.filter(p => p.candidateId).map(p => {
+            const nominee = awardNominees.find(c => c.id === p.candidateId);
+            return {
+                Event: p.eventLabel || "Main Event",
+                Category: p.category,
+                Rank: p.rank,
+                PT: nominee?.company || "-",
+            };
+        });
+    };
+
+    const getDoorprizeRawData = () => {
+        return doorprizeWinners.map((w, i) => ({
+            No: i + 1,
+            Name: w.name,
+            Prize: w.prizeName || "Hadiah Doorprize"
+        }));
+    };
+
+    // --- EXPORT FUNCTIONS ---
+
+    const exportToExcel = () => {
+        const wb = XLSX.utils.book_new();
+        
+        // Sheet 1: Award Winners
+        const awardData = getAwardRawData();
+        const wsAward = XLSX.utils.json_to_sheet(awardData);
+        XLSX.utils.book_append_sheet(wb, wsAward, "Awards");
+
+        // Sheet 2: Doorprize Winners
+        const doorprizeData = getDoorprizeRawData();
+        const wsDoorprize = XLSX.utils.json_to_sheet(doorprizeData);
+        XLSX.utils.book_append_sheet(wb, wsDoorprize, "Doorprize Winners");
+
+        XLSX.writeFile(wb, "Rekap_Pemenang_Acara.xlsx");
+    };
+
+    const exportToCSV = () => {
+        const awardData = getAwardRawData();
+        const doorprizeData = getDoorprizeRawData();
+
+        let csvContent = "data:text/csv;charset=utf-8,";
+        
+        csvContent += "AWARDS\n";
+        csvContent += "Event,Category,Rank,PT Name\n";
+        awardData.forEach(row => {
+            csvContent += `"${row.Event}","${row.Category}",${row.Rank},"${row.PT}"\n`;
+        });
+
+        csvContent += "\nDOORPRIZE WINNERS\n";
+        csvContent += "No,Name,Prize\n";
+        doorprizeData.forEach(row => {
+            csvContent += `${row.No},"${row.Name}","${row.Prize}"\n`;
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "rekap_data.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    const exportToPDF = () => {
+        type JsPDFWithAutoTable = jsPDF & {
+          lastAutoTable?: {
+            finalY: number;
+          };
+        };
+        const doc = new jsPDF() as JsPDFWithAutoTable;
+
+        doc.setFontSize(18);
+        doc.text("Laporan Rekap Pemenang Acara", 14, 22);
+
+        doc.setFontSize(11);
+        doc.text(`Dicetak pada: ${new Date().toLocaleString()}`, 14, 30);
+
+        // Award Table
+        doc.setFontSize(14);
+        doc.text("Pemenang Awards", 14, 45);
+
+        const awardData = getAwardRawData().map(r => [
+            r.Event,
+            r.Category,
+            `Juara ${r.Rank}`,
+            r.PT
+        ]);
+
+        autoTable(doc, {
+            startY: 50,
+            head: [["Event/Sesi", "Category", "Rank", "Nama Costumer/PT"]],
+            body: awardData,
+            theme: "grid",
+            headStyles: { fillColor: [59, 130, 246] }
+        });
+
+        // Doorprize Table
+        const finalY = (doc.lastAutoTable?.finalY ?? 50) + 20;
+
+        doc.text("Pemenang Doorprize", 14, finalY);
+
+        const doorprizeData = getDoorprizeRawData().map(d => [
+            d.No,
+            d.Name,
+            d.Prize
+        ]);
+
+        autoTable(doc, {
+            startY: finalY + 5,
+            head: [["No", "Nama Pemenang", "Hadiah"]],
+            body: doorprizeData,
+            theme: "grid",
+            headStyles: { fillColor: [234, 179, 8] }
+        });
+
+        doc.save("rekap_pemenang.pdf");
+    };
+
+    return (
+        <div className="space-y-8">
+            <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-100 gap-4">
+                <div className="flex flex-col sm:flex-row gap-6 w-full xl:w-auto">
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                            <FileText className="text-blue-600"/> Rekap & Download
+                        </h3>
+                        <p className="text-slate-500 text-sm">Lihat history dan unduh data pemenang.</p>
+                    </div>
+                    
+                    {/* DROPDOWN FILTER HISTORY */}
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center gap-3">
+                          <div className="bg-white p-2 rounded-lg shadow-sm text-slate-500">
+                            <Calendar size={18} />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Pilih Tanggal Sesi</label>
+                            <select 
+                                value={selectedSession} 
+                                onChange={(e) => setSelectedSession(e.target.value)}
+                                className="bg-transparent font-bold text-slate-700 outline-none text-sm min-w-[200px]"
+                            >
+                                <option value="active">Sesi Aktif (Current)</option>
+                                <option disabled>─── Arsip / History ───</option>
+                                {historySessions.map(sess => (
+                                    <option key={sess.id} value={sess.id}>
+                                        {sess.label}
+                                    </option>
+                                ))}
+                            </select>
+                          </div>
+                    </div>
+                </div>
+
+                <div className="flex flex-wrap gap-3 w-full xl:w-auto">
+                    <button onClick={exportToCSV} className="flex-1 xl:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-sm flex items-center justify-center gap-2 transition-colors">
+                        <FileText size={16}/> CSV
+                    </button>
+                    <button onClick={exportToExcel} className="flex-1 xl:flex-none px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 font-bold rounded-lg text-sm flex items-center justify-center gap-2 transition-colors">
+                        <FileSpreadsheet size={16}/> Excel
+                    </button>
+                    <button onClick={exportToPDF} className="flex-1 xl:flex-none px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold rounded-lg text-sm flex items-center justify-center gap-2 transition-colors">
+                        <Download size={16}/> PDF
+                    </button>
+                </div>
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-8">
+                {/* TABLE AWARDS */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                        <h4 className="font-bold text-slate-700 flex items-center gap-2"><Medal size={18} className="text-yellow-500"/> Pemenang Awards</h4>
+                        <span className="bg-white px-2 py-1 rounded text-xs font-bold text-slate-500 border border-slate-200">{awardWinners.filter(p => p.candidateId).length} Pemenang</span>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm min-w-[500px]">
+                            <thead className="bg-white text-slate-500 border-b border-slate-100">
+                                <tr>
+                                    <th className="px-4 py-3 font-bold w-12 text-center">#</th>
+                                    <th className="px-4 py-3 font-bold">Kategori & Event</th>
+                                    <th className="px-4 py-3 font-bold">Pemenang</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {awardWinners.filter(p => p.candidateId).map((p) => (
+                                    <tr key={p.id} className="hover:bg-slate-50">
+                                        <td className="px-4 py-3 text-center font-black text-slate-700">{p.rank}</td>
+                                        <td className="px-4 py-3">
+                                            <div className="font-bold text-blue-600">{p.category || "-"}</div>
+                                            <div className="text-xs text-slate-400">{p.eventLabel || "Main Event"}</div>
+                                        </td>
+                                        <td className="px-4 py-3 text-slate-700">{getAwardName(p.candidateId)}</td>
+                                    </tr>
+                                ))}
+                                {awardWinners.filter(p => p.candidateId).length === 0 && (
+                                    <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-400">Belum ada data</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                {/* TABLE DOORPRIZE */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                        <h4 className="font-bold text-slate-700 flex items-center gap-2"><Gift size={18} className="text-blue-500"/> Pemenang Doorprize</h4>
+                        <span className="bg-white px-2 py-1 rounded text-xs font-bold text-slate-500 border border-slate-200">{doorprizeWinners.length} Pemenang</span>
+                    </div>
+                    <div className="overflow-x-auto max-h-[500px]">
+                        <table className="w-full text-left text-sm min-w-[500px]">
+                            <thead className="bg-white text-slate-500 border-b border-slate-100 sticky top-0 z-10 shadow-sm">
+                                <tr>
+                                    <th className="px-4 py-3 font-bold w-12">No</th>
+                                    <th className="px-4 py-3 font-bold">Nama Pemenang</th>
+                                    <th className="px-4 py-3 font-bold">Hadiah</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {doorprizeWinners.map((w, i) => (
+                                    <tr key={w.id} className="hover:bg-slate-50">
+                                        <td className="px-4 py-3 text-slate-500 font-mono">{i + 1}</td>
+                                        <td className="px-4 py-3 font-medium text-slate-800">{w.name}</td>
+                                        <td className="px-4 py-3 text-blue-600">{w.prizeName || "Doorprize"}</td>
+                                    </tr>
+                                ))}
+                                {doorprizeWinners.length === 0 && (
+                                    <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-400">Belum ada pemenang</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
 }

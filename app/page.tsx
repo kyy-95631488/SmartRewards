@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Crown, Gift, ArrowLeft, Trophy, ChevronRight,
-  Medal, Search, Zap, List, X, History, PartyPopper,
+  Medal, Zap, List, X, History, PartyPopper,
   Box, PackageOpen, Clock, Calendar, Sparkles, Lock, Save, RotateCcw,
   Volume2, VolumeX
 } from "lucide-react";
@@ -14,7 +14,8 @@ import {
 import { db } from "./lib/firebase";
 import {
   collection, onSnapshot, query, orderBy,
-  doc, updateDoc, addDoc, serverTimestamp
+  doc, updateDoc, addDoc, serverTimestamp,
+  Timestamp
 } from "firebase/firestore";
 
 // --- TIPE DATA ---
@@ -35,41 +36,44 @@ interface WinnerLog {
   name: string;
   prizeName: string;
   prizeImage: string;
-  timestamp: unknown;
+  timestamp: Timestamp | null;
   displayTime?: string;
 }
 
-interface RoyalCandidate {
+// Data Structures for Awards
+interface AwardNominee {
   id: string;
   name: string;
   company: string;
 }
 
-interface RoyalParticipant {
+interface AwardWinnerSlot {
   id: string;
   rank: number;
   candidateId: string;
-  title: string;
+  category: string;
+  eventLabel?: string;
 }
 
-interface MergedRoyalWinner {
+interface MergedAwardWinner {
   id: string;
   rank: number;
-  title: string;
+  category: string;
+  eventLabel: string;
   name: string;
   company: string;
 }
 
 interface AppConfig {
   doorprizeStart: string;
-  royalStart: string;
+  awardStart: string;
   doorprizeStatus: "open" | "closed";
-  royalStatus: "open" | "closed";
+  awardStatus: "open" | "closed";
   doorprizePasscode: string;
-  royalPasscode: string;
+  awardPasscode: string;
 }
 
-// Particle Type for 3D Confetti
+// Particle Type
 type Particle = {
   id: number;
   x: number;
@@ -83,7 +87,7 @@ type Particle = {
   delay: number;
 };
 
-// Star Type for Background
+// Star Type
 type Star = {
   id: number;
   top: number;
@@ -106,7 +110,7 @@ const getSecureRandomInt = (max: number) => {
 };
 
 export default function Home() {
-  const [view, setView] = useState<"menu" | "royal" | "doorprize">("menu");
+  const [view, setView] = useState<"menu" | "awards" | "doorprize">("menu");
   const [showParticipantModal, setShowParticipantModal] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -115,24 +119,23 @@ export default function Home() {
   const [prizes, setPrizes] = useState<Prize[]>([]);
   const [doorprizeLog, setDoorprizeLog] = useState<WinnerLog[]>([]);
 
-  // Royal Data
-  const [royalCandidates, setRoyalCandidates] = useState<RoyalCandidate[]>([]);
-  const [royalSlots, setRoyalSlots] = useState<RoyalParticipant[]>([]);
-  const [royalWinnersDb, setRoyalWinnersDb] = useState<MergedRoyalWinner[]>([]);
+  // Awards Data
+  const [awardNominees, setAwardNominees] = useState<AwardNominee[]>([]);
+  const [awardSlots, setAwardSlots] = useState<AwardWinnerSlot[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [awardHistory, setAwardHistory] = useState<any[]>([]); 
 
-  // Config & Schedule & Auth
+  // Config
   const [config, setConfig] = useState<AppConfig>({
-    doorprizeStart: "", royalStart: "",
-    doorprizeStatus: "closed", royalStatus: "closed",
-    doorprizePasscode: "", royalPasscode: ""
+    doorprizeStart: "", awardStart: "",
+    doorprizeStatus: "closed", awardStatus: "closed",
+    doorprizePasscode: "", awardPasscode: ""
   });
 
-  // Passcode States & Security
-  const [passcodeModal, setPasscodeModal] = useState<"doorprize" | "royal" | null>(null);
+  // Auth & Rate Limit
+  const [passcodeModal, setPasscodeModal] = useState<"doorprize" | "awards" | null>(null);
   const [passcodeInput, setPasscodeInput] = useState("");
-  const [authorized, setAuthorized] = useState<{ doorprize: boolean; royal: boolean }>({ doorprize: false, royal: false });
-
-  // Rate Limiting
+  const [authorized, setAuthorized] = useState<{ doorprize: boolean; awards: boolean }>({ doorprize: false, awards: false });
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [isLockedOut, setIsLockedOut] = useState(false);
   const [lockoutTimer, setLockoutTimer] = useState(0);
@@ -144,14 +147,17 @@ export default function Home() {
 
   // Confirmation States
   const [pendingDoorprize, setPendingDoorprize] = useState<{ winner: Participant; prize: Prize } | null>(null);
-  const [pendingRoyal, setPendingRoyal] = useState<{ winner: MergedRoyalWinner } | null>(null);
+  
+  // Award Reveal States
+  const [pendingAward, setPendingAward] = useState<{ winner: MergedAwardWinner } | null>(null);
   const [winner, setWinner] = useState<{ name: string; prize: Prize } | null>(null);
-  const [royalStep, setRoyalStep] = useState(0);
-  const [isRoyalSpinning, setIsRoyalSpinning] = useState(false);
-  const [revealedRoyalWinner, setRevealedRoyalWinner] = useState<MergedRoyalWinner | null>(null);
+  
+  const [awardStep, setAwardStep] = useState(0);
+  const [isAwardSpinning, setIsAwardSpinning] = useState(false);
+  const [revealedAwardWinner, setRevealedAwardWinner] = useState<MergedAwardWinner | null>(null);
   const [confettiParticles, setConfettiParticles] = useState<Particle[]>([]);
 
-  // State for Stars (Memoized initialization)
+  // Memoized Stars
   const [stars] = useState<Star[]>(() => Array.from({ length: 50 }).map((_, i) => ({
     id: i,
     top: Math.random() * 100,
@@ -164,17 +170,18 @@ export default function Home() {
   const spinIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lockoutIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // --- AUDIO REFS ---
+  // --- AUDIO REFS & LOGIC ---
   const spinAudioRef = useRef<HTMLAudioElement | null>(null);
   const clapAudioRef = useRef<HTMLAudioElement | null>(null);
   const winAudioRef = useRef<HTMLAudioElement | null>(null);
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null);
   const bgmFadeInterval = useRef<NodeJS.Timeout | null>(null);
 
-  // Audio State
   const [isMuted, setIsMuted] = useState(false);
+  // Tambahan Ref untuk sinkronisasi mute realtime di dalam interval/timeout
+  const isMutedRef = useRef(false);
 
-  // --- 2. INITIALIZE VISUALS & AUDIO ---
+  // --- INITIALIZE VISUALS & AUDIO ---
   useEffect(() => {
     if (typeof window !== "undefined") {
       if (!spinAudioRef.current) {
@@ -198,7 +205,8 @@ export default function Home() {
     }
 
     const startAudioOnInteraction = () => {
-      if (bgmAudioRef.current && bgmAudioRef.current.paused && !isMuted) {
+      // Cek isMutedRef untuk memastikan tidak play jika user sudah mute
+      if (bgmAudioRef.current && bgmAudioRef.current.paused && !isMutedRef.current) {
         bgmAudioRef.current.play().catch(e => console.log("Autoplay blocked:", e));
       }
     };
@@ -217,11 +225,24 @@ export default function Home() {
         }
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // Empty dependency array intentionally
 
-  // --- SMART AUDIO HELPERS ---
+  // --- IMPROVED AUDIO HELPERS ---
+  
+  // Fungsi Helper untuk mematikan paksa semua suara
+  const stopAllSounds = () => {
+    [spinAudioRef, clapAudioRef, winAudioRef, bgmAudioRef].forEach(ref => {
+        if (ref.current) {
+            ref.current.pause();
+            ref.current.currentTime = 0;
+        }
+    });
+  };
+
   const smartPlay = (audioRef: React.MutableRefObject<HTMLAudioElement | null>) => {
+    // KUNCI PERBAIKAN: Cek Ref, bukan State, untuk nilai realtime
+    if (isMutedRef.current) return; 
+
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => {});
@@ -235,47 +256,69 @@ export default function Home() {
     }
   };
 
-  // --- HANDLE MUTE TOGGLE ---
-  useEffect(() => {
-    if (!bgmAudioRef.current) return;
-    if (isMuted) {
-      bgmAudioRef.current.pause();
-    } else {
-      bgmAudioRef.current.play().catch(() => { });
-    }
-  }, [isMuted]);
+  // Toggle Mute Logic yang lebih robust
+  const toggleMute = () => {
+    setIsMuted(prev => {
+        const newState = !prev;
+        isMutedRef.current = newState; // Sync Ref
 
-  // --- SMART AUDIO DUCKING SYSTEM ---
+        if (newState) {
+            // Jika Mute Aktif: Matikan SEMUA suara seketika
+            stopAllSounds();
+        } else {
+            // Jika Unmute: Nyalakan kembali BGM saja
+            if (bgmAudioRef.current) {
+                bgmAudioRef.current.volume = 0.4;
+                bgmAudioRef.current.play().catch(() => {});
+            }
+        }
+        return newState;
+    });
+  };
+
+  // Ducking System (Fade in/out BGM saat ada event)
   useEffect(() => {
-    const isEffectPlaying = isSpinning || isRoyalSpinning || pendingDoorprize || pendingRoyal || winner || revealedRoyalWinner;
+    const isEffectPlaying = isSpinning || isAwardSpinning || pendingDoorprize || pendingAward || winner || revealedAwardWinner;
     const targetVolume = isEffectPlaying ? 0.05 : 0.4;
 
-    if (bgmAudioRef.current && !isMuted) {
-      if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
-      bgmFadeInterval.current = setInterval(() => {
-        if (!bgmAudioRef.current) return;
+    if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
 
-        const currentVol = bgmAudioRef.current.volume;
-        if (Math.abs(currentVol - targetVolume) < 0.02) {
-          bgmAudioRef.current.volume = targetVolume;
-          if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
-        } else if (currentVol > targetVolume) {
-          bgmAudioRef.current.volume = Math.max(0, currentVol - 0.02);
-        } else {
-          bgmAudioRef.current.volume = Math.min(1, currentVol + 0.01);
+    // Jangan jalankan logika fade jika sedang muted
+    if (isMuted) return;
+
+    if (bgmAudioRef.current) {
+        // Pastikan play jika tidak sengaja pause tapi tidak mute
+        if (bgmAudioRef.current.paused && !isMuted) {
+            bgmAudioRef.current.play().catch(() => {});
         }
-      }, 50);
-    }
-  }, [isSpinning, isRoyalSpinning, pendingDoorprize, pendingRoyal, winner, revealedRoyalWinner, isMuted]);
 
-  const toggleMute = () => setIsMuted(prev => !prev);
+        bgmFadeInterval.current = setInterval(() => {
+            if (!bgmAudioRef.current) return;
+            const currentVol = bgmAudioRef.current.volume;
+            
+            // Safety check floating point
+            if (Math.abs(currentVol - targetVolume) < 0.02) {
+                bgmAudioRef.current.volume = targetVolume;
+                if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
+            } else if (currentVol > targetVolume) {
+                bgmAudioRef.current.volume = Math.max(0, currentVol - 0.02);
+            } else {
+                bgmAudioRef.current.volume = Math.min(1, currentVol + 0.01);
+            }
+        }, 50);
+    }
+    
+    return () => {
+        if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
+    }
+  }, [isSpinning, isAwardSpinning, pendingDoorprize, pendingAward, winner, revealedAwardWinner, isMuted]);
 
   const resetAll = () => {
     setWinner(null);
-    setRevealedRoyalWinner(null);
+    setRevealedAwardWinner(null);
     setRollingName("Ready?");
     setPendingDoorprize(null);
-    setPendingRoyal(null);
+    setPendingAward(null);
     setConfettiParticles([]);
     setShowFlash(false);
     if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
@@ -285,9 +328,9 @@ export default function Home() {
     smartStop(winAudioRef);
   };
 
-  // --- MODERN CONFETTI (3D RIBBONS) ---
   const generateConfetti = (amount = 150) => {
     const colors = ['bg-pink-500', 'bg-cyan-400', 'bg-yellow-400', 'bg-purple-500', 'bg-white', 'bg-green-400', 'bg-red-500'];
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     return Array.from({ length: amount }).map((_) => ({
       id: Math.random(),
       x: Math.random() * 100,
@@ -323,10 +366,10 @@ export default function Home() {
         const data = docSnapshot.data() as AppConfig;
         setConfig(data);
         const savedDoorprizeCode = localStorage.getItem("doorprize_passcode");
-        const savedRoyalCode = localStorage.getItem("royal_passcode");
+        const savedAwardCode = localStorage.getItem("awards_passcode");
         setAuthorized({
           doorprize: savedDoorprizeCode === data.doorprizePasscode,
-          royal: savedRoyalCode === data.royalPasscode
+          awards: savedAwardCode === data.awardPasscode
         });
       }
     });
@@ -351,29 +394,35 @@ export default function Home() {
       setDoorprizeLog(logs);
     });
 
-    const unsubRoyalSlots = onSnapshot(query(collection(db, "royal_participants"), orderBy("rank", "asc")), (snapshot) => {
-      setRoyalSlots(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RoyalParticipant)));
+    const unsubAwardSlots = onSnapshot(collection(db, "award_winners"), (snapshot) => {
+      setAwardSlots(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AwardWinnerSlot)));
     });
 
-    const unsubCandidates = onSnapshot(collection(db, "royal_candidates"), (snapshot) => {
-      setRoyalCandidates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RoyalCandidate)));
+    const unsubAwardNominees = onSnapshot(collection(db, "award_nominees"), (snapshot) => {
+      setAwardNominees(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AwardNominee)));
       setLoading(false);
     });
 
-    const unsubRoyalWinners = onSnapshot(collection(db, "royal_winners"), (snapshot) => {
-      const winners = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MergedRoyalWinner));
-      setRoyalWinnersDb(winners);
-      setRoyalStep(winners.length);
+    // --- FETCH AWARD HISTORY UNTUK SYNC STATE ---
+    const unsubAwardHistory = onSnapshot(collection(db, "award_history"), (snapshot) => {
+      const history = snapshot.docs.map(d => d.data());
+      setAwardHistory(history);
+      // Auto-jump award step agar tidak perlu spin ulang jika data sudah ada
+      if (history.length > 0) {
+          setAwardStep(history.length);
+      } else {
+          setAwardStep(0);
+      }
     });
 
     return () => {
       unsubConfig(); unsubParticipants(); unsubPrizes(); unsubHistory();
-      unsubRoyalSlots(); unsubCandidates(); unsubRoyalWinners();
+      unsubAwardSlots(); unsubAwardNominees(); unsubAwardHistory();
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
     };
   }, [view]);
 
-  // --- CHECK LOCKOUT STATUS ---
+  // --- CHECK LOCKOUT ---
   useEffect(() => {
     const checkLock = () => {
       const lockoutTimestamp = localStorage.getItem("lockout_timestamp");
@@ -407,28 +456,54 @@ export default function Home() {
     return () => { if (lockoutIntervalRef.current) clearInterval(lockoutIntervalRef.current); }
   }, []);
 
-  // --- COMPUTED DATA (MEMOIZED FOR PERFORMANCE) ---
-  const mergedRoyalWinners = useMemo<MergedRoyalWinner[]>(() => {
-    return royalSlots.map(slot => {
-      const candidate = royalCandidates.find(c => c.id === slot.candidateId);
+  // --- MERGE AWARDS DATA ---
+  const mergedAwardWinners = useMemo<MergedAwardWinner[]>(() => {
+    const filledSlots = awardSlots.filter(s => s.candidateId && s.candidateId !== "");
+    
+    return filledSlots.map(slot => {
+      const nominee = awardNominees.find(c => c.id === slot.candidateId);
       return {
-        id: slot.id, rank: slot.rank, title: slot.title,
-        name: candidate ? candidate.name : "Belum Dipilih",
-        company: candidate ? candidate.company : "-"
+        id: slot.id,
+        rank: slot.rank,
+        category: slot.category,
+        eventLabel: slot.eventLabel || "Main Event",
+        name: nominee ? nominee.name : "Unknown",
+        company: nominee ? nominee.company : "-"
       };
-    }).filter(w => w.name !== "Belum Dipilih");
-  }, [royalSlots, royalCandidates]);
+    }).sort((a, b) => {
+        if (a.eventLabel < b.eventLabel) return -1;
+        if (a.eventLabel > b.eventLabel) return 1;
+        if (a.category < b.category) return -1;
+        if (a.category > b.category) return 1;
+        return b.rank - a.rank; // Descending (3, 2, 1)
+    });
+  }, [awardSlots, awardNominees]);
 
   const totalItemsRemaining = useMemo(() => prizes.reduce((acc, curr) => acc + curr.stock, 0), [prizes]);
-  const isRoyalCompleted = royalSlots.length > 0 && royalWinnersDb.length >= royalSlots.length;
-  const isDoorprizeCompleted = prizes.length > 0 && totalItemsRemaining === 0;
+  
+  // LOGIC COMPLETED: Menggunakan Database History
+  const isAwardCompleted = useMemo(() => {
+      return mergedAwardWinners.length > 0 && awardHistory.length >= mergedAwardWinners.length;
+  }, [mergedAwardWinners, awardHistory]);
 
-  // --- AUTH & NAVIGATION SECURE ---
-  const handleAccessRequest = (targetView: "royal" | "doorprize") => {
-    const status = targetView === "doorprize" ? config.doorprizeStatus : config.royalStatus;
-    if (targetView === "royal" && isRoyalCompleted) { setView(targetView); return; }
-    if (targetView === "doorprize" && isDoorprizeCompleted) { setView(targetView); return; }
+  const isDoorprizeCompleted = useMemo(() => {
+      return prizes.length > 0 && totalItemsRemaining === 0;
+  }, [prizes, totalItemsRemaining]);
+
+  // --- AUTH NAVIGATION ---
+  const handleAccessRequest = (targetView: "awards" | "doorprize") => {
+    // BYPASS LOGIC: Jika sudah completed, langsung izinkan akses
+    if (targetView === "awards" && isAwardCompleted) { 
+        setView(targetView); 
+        return; 
+    }
+    if (targetView === "doorprize" && isDoorprizeCompleted) { 
+        setView(targetView); 
+        return; 
+    }
     
+    // Normal Logic
+    const status = targetView === "doorprize" ? config.doorprizeStatus : config.awardStatus;
     if (status === "closed") { alert("Sesi ini belum dibuka oleh Admin."); return; }
     
     if (authorized[targetView]) { setView(targetView); }
@@ -442,7 +517,7 @@ export default function Home() {
     if (!passcodeModal) return;
     if (isLockedOut) return;
 
-    const correctCode = passcodeModal === "doorprize" ? config.doorprizePasscode : config.royalPasscode;
+    const correctCode = passcodeModal === "doorprize" ? config.doorprizePasscode : config.awardPasscode;
     const sanitizedInput = sanitizeInput(passcodeInput);
 
     if (sanitizedInput === correctCode) {
@@ -458,28 +533,11 @@ export default function Home() {
       setPasscodeInput("");
       
       if (newAttempts >= 5) {
-          const lockoutDuration = 30; // Detik
+          const lockoutDuration = 30;
           const unlockTime = Date.now() + (lockoutDuration * 1000);
-          
           localStorage.setItem("lockout_timestamp", unlockTime.toString());
-          
           setIsLockedOut(true);
           setLockoutTimer(lockoutDuration);
-          
-          if (lockoutIntervalRef.current) clearInterval(lockoutIntervalRef.current);
-          lockoutIntervalRef.current = setInterval(() => {
-              setLockoutTimer((prev) => {
-                  if (prev <= 1) {
-                      if (lockoutIntervalRef.current) clearInterval(lockoutIntervalRef.current);
-                      setIsLockedOut(false);
-                      setFailedAttempts(0);
-                      localStorage.removeItem("lockout_timestamp");
-                      return 0;
-                  }
-                  return prev - 1;
-              });
-          }, 1000);
-          
           alert("Terlalu banyak percobaan salah. Sistem dikunci selama 30 detik.");
       } else {
           alert(`Passcode Salah! Percobaan ${newAttempts}/5`);
@@ -487,20 +545,20 @@ export default function Home() {
     }
   };
 
-  // --- LOGIC: ROYAL ---
-  const handleRoyalReveal = () => {
-    const currentWinnerData = mergedRoyalWinners[royalStep];
-    if (isRoyalSpinning || !currentWinnerData) return;
+  // --- AWARDS LOGIC ---
+  const handleAwardReveal = () => {
+    const currentWinnerData = mergedAwardWinners[awardStep];
+    if (isAwardSpinning || !currentWinnerData) return;
 
-    setIsRoyalSpinning(true);
-    setRevealedRoyalWinner(null);
+    setIsAwardSpinning(true);
+    setRevealedAwardWinner(null);
     setConfettiParticles([]);
     smartPlay(spinAudioRef);
 
     spinIntervalRef.current = setInterval(() => {
-      const randomName = royalCandidates.length > 0
-        ? royalCandidates[Math.floor(Math.random() * royalCandidates.length)].name
-        : "Loading...";
+      const randomName = awardNominees.length > 0
+        ? awardNominees[Math.floor(Math.random() * awardNominees.length)].name
+        : "Calculating...";
       setRollingName(randomName);
     }, 50);
 
@@ -511,42 +569,49 @@ export default function Home() {
 
       triggerFlashEffect();
       setRollingName(currentWinnerData.name);
-      setIsRoyalSpinning(false);
-      setPendingRoyal({ winner: currentWinnerData });
+      setIsAwardSpinning(false);
+      setPendingAward({ winner: currentWinnerData });
     }, 3000);
   };
 
-  const confirmRoyalWinner = async () => {
-    if (!pendingRoyal) return;
+  // --- FEATURE: SAVE AWARD TO DB ---
+  const confirmAwardWinner = async () => {
+    if (!pendingAward) return;
     smartPlay(winAudioRef);
+    
+    setRevealedAwardWinner(pendingAward.winner);
+    setConfettiParticles(generateConfetti(300));
+    triggerFlashEffect();
+    setPendingAward(null);
 
+    // -- SAVE TO DB START --
     try {
-      await addDoc(collection(db, "royal_winners"), {
-        rank: pendingRoyal.winner.rank,
-        title: pendingRoyal.winner.title,
-        name: pendingRoyal.winner.name,
-        company: pendingRoyal.winner.company,
-        timestamp: serverTimestamp()
-      });
-      
-      setRevealedRoyalWinner(pendingRoyal.winner);
-      setConfettiParticles(generateConfetti(300));
-      triggerFlashEffect();
-      setPendingRoyal(null);
+        await addDoc(collection(db, "award_history"), {
+            name: pendingAward.winner.name,
+            company: pendingAward.winner.company,
+            category: pendingAward.winner.category,
+            rank: pendingAward.winner.rank,
+            eventLabel: pendingAward.winner.eventLabel,
+            timestamp: serverTimestamp()
+        });
+        console.log("Award saved to history DB");
     } catch (error) {
-      console.error("Error saving royal winner:", error);
-      alert("Gagal menyimpan pemenang. Periksa koneksi internet.");
+        console.error("Failed to save award history:", error);
     }
+    // -- SAVE TO DB END --
+    
+    // Advance Step
+    setAwardStep(prev => prev + 1);
   };
 
-  const retryRoyal = () => {
-    setPendingRoyal(null);
+  const retryAward = () => {
+    setPendingAward(null);
     setRollingName("Ready?");
     smartStop(clapAudioRef);
     smartStop(winAudioRef);
   };
 
-  // --- LOGIC: DOORPRIZE ---
+  // --- DOORPRIZE LOGIC ---
   const handleDoorprizeSpin = async () => {
     const availablePrizes = prizes.filter(p => p.stock > 0);
     const previousWinnerNames = doorprizeLog.map(log => log.name);
@@ -633,9 +698,8 @@ export default function Home() {
     smartStop(winAudioRef);
   };
 
-  // Memoized Modal Data to prevent lag during re-renders
-  const modalData = useMemo(() => view === "royal" ? royalCandidates : participants, [view, royalCandidates, participants]);
-  const modalTitle = view === "royal" ? "Kandidat Royal Top 6" : "Peserta Doorprize";
+  const modalData = useMemo(() => view === "awards" ? awardNominees : participants, [view, awardNominees, participants]);
+  const modalTitle = view === "awards" ? "Daftar Nominee Awards" : "Peserta Doorprize";
 
   if (loading) {
     return (
@@ -652,7 +716,7 @@ export default function Home() {
   return (
     <main className="min-h-screen relative flex flex-col items-center py-4 md:py-10 overflow-hidden font-sans text-slate-100 bg-slate-950 selection:bg-blue-500 selection:text-white">
 
-      {/* --- FLASH EFFECT OVERLAY --- */}
+      {/* --- FLASH EFFECT --- */}
       <AnimatePresence>
         {showFlash && (
           <motion.div
@@ -665,19 +729,13 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* --- NEW MODERN BACKGROUND SYSTEM (AURORA & STARS) --- */}
-      {/* Optimized: translate-z-0 for GPU promotion */}
+      {/* --- BACKGROUND SYSTEM --- */}
       <div className="fixed inset-0 pointer-events-none z-0 transform-gpu">
         <div className="absolute inset-0 bg-slate-950"></div>
-
-        {/* Static Noise Texture */}
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 mix-blend-overlay"></div>
-
-        {/* Deep Ambient Glow (Aurora) - Optimized with transform-gpu */}
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-5 mix-blend-overlay"></div>
         <div className="absolute top-[-20%] left-[-20%] w-[80%] h-[80%] bg-blue-900/20 rounded-full blur-[150px] animate-pulse transform-gpu will-change-transform"></div>
         <div className="absolute bottom-[-20%] right-[-20%] w-[80%] h-[80%] bg-purple-900/20 rounded-full blur-[150px] animate-pulse transform-gpu will-change-transform" style={{ animationDelay: '2s' }}></div>
 
-        {/* Twinkling Stars Effect */}
         <div className="absolute inset-0 w-full h-full">
           {stars.map((star) => (
             <div
@@ -696,12 +754,11 @@ export default function Home() {
         </div>
       </div>
 
-      {/* --- FLOATING BGM CONTROL --- */}
+      {/* --- AUDIO TOGGLE --- */}
       <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-[100]">
         <button
           onClick={toggleMute}
           className="w-10 h-10 md:w-12 md:h-12 bg-slate-800/80 backdrop-blur-md border border-white/10 rounded-full flex items-center justify-center text-white hover:bg-slate-700 hover:scale-110 transition-all shadow-lg group"
-          title={isMuted ? "Unmute Music" : "Mute Music"}
         >
           {isMuted ? <VolumeX size={18} className="text-red-400 md:w-5 md:h-5" /> : <Volume2 size={18} className="text-green-400 animate-pulse md:w-5 md:h-5" />}
         </button>
@@ -711,14 +768,14 @@ export default function Home() {
       <AnimatePresence>
         {passcodeModal && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
-            <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-slate-900 border border-white/10 p-6 md:p-8 rounded-3xl max-w-md w-full text-center relative overflow-hidden">
+            <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-slate-900 border border-white/10 p-6 md:p-8 rounded-3xl max-w-md w-full text-center relative overflow-hidden shadow-2xl">
               <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-purple-500/10"></div>
               <div className="relative z-10">
                 <div className="w-14 h-14 md:w-16 md:h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 md:mb-6 border border-white/10">
                   <Lock className="text-white" size={24} />
                 </div>
                 <h3 className="text-xl md:text-2xl font-bold text-white mb-2">Restricted Access</h3>
-                <p className="text-slate-400 mb-6 text-xs md:text-sm">Masukkan passcode untuk mengakses halaman {passcodeModal}.</p>
+                <p className="text-slate-400 mb-6 text-xs md:text-sm">Masukkan passcode untuk halaman {passcodeModal}.</p>
 
                 <input
                   type="password"
@@ -740,17 +797,18 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* --- MODAL KONFIRMASI (DOORPRIZE & ROYAL) --- */}
+      {/* --- MODAL KONFIRMASI (DOORPRIZE & AWARDS) --- */}
       <AnimatePresence>
-        {(pendingDoorprize || pendingRoyal) && (
+        {(pendingDoorprize || pendingAward) && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-y-auto">
-
-            {/* ROTATING GOD RAYS BACKGROUND FOR MODAL - Optimized */}
+            
+            {/* GOD RAYS BACKDROP */}
             <motion.div
               animate={{ rotate: 360 }}
               transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
               className="absolute z-0 w-[800px] h-[800px] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.2)_180deg,transparent_360deg)] rounded-full blur-3xl opacity-50 pointer-events-none transform-gpu will-change-transform"
             />
+            
             <motion.div initial={{ scale: 0.5, y: 100 }} animate={{ scale: 1, y: 0 }} className="bg-slate-900 border-2 border-yellow-500/50 p-6 md:p-8 rounded-[2rem] max-w-lg w-full text-center relative overflow-hidden shadow-[0_0_80px_rgba(234,179,8,0.3)] z-10 m-auto">
               <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10"></div>
               <div className="relative z-10">
@@ -776,18 +834,20 @@ export default function Home() {
                   </>
                 )}
 
-                {pendingRoyal && (
+                {pendingAward && (
                   <>
                     <div className="w-16 h-16 md:w-20 md:h-20 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-yellow-500/50 shadow-[0_0_30px_rgba(234,179,8,0.4)]">
                       <Crown className="text-yellow-400" size={32} />
                     </div>
-                    <h3 className="text-lg md:text-xl text-yellow-200 mb-2">Rank #{pendingRoyal.winner.rank}</h3>
-                    <h2 className="text-3xl md:text-5xl font-black text-white mb-2 drop-shadow-lg break-words">{pendingRoyal.winner.name}</h2>
-                    <p className="text-slate-400 mb-8 text-base md:text-lg break-words">{pendingRoyal.winner.company}</p>
+                    <h3 className="text-lg md:text-xl text-yellow-200 mb-1">{pendingAward.winner.category}</h3>
+                    <div className="text-xs text-yellow-500/70 font-bold uppercase tracking-wider mb-4">JUARA {pendingAward.winner.rank}</div>
+                    
+                    <h2 className="text-3xl md:text-5xl font-black text-white mb-2 drop-shadow-lg break-words">{pendingAward.winner.name}</h2>
+                    <p className="text-slate-400 mb-8 text-base md:text-lg break-words">{pendingAward.winner.company}</p>
 
                     <div className="flex flex-col sm:flex-row gap-3 md:gap-4">
-                      <button onClick={retryRoyal} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base"><RotateCcw size={18} /> Batal</button>
-                      <button onClick={confirmRoyalWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-yellow-500 text-slate-900 hover:bg-yellow-400 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base"><Save size={18} /> SAH & REVEAL</button>
+                      <button onClick={retryAward} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base"><RotateCcw size={18} /> Batal</button>
+                      <button onClick={confirmAwardWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-yellow-500 text-slate-900 hover:bg-yellow-400 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base"><Save size={18} /> SAH & REVEAL</button>
                     </div>
                   </>
                 )}
@@ -816,7 +876,7 @@ export default function Home() {
                         <tr className="text-xs text-slate-400 uppercase tracking-wider border-b border-white/10">
                         <th className="py-4 px-2 md:px-4 font-semibold w-12 md:w-16">No</th>
                         <th className="py-4 px-2 md:px-4 font-semibold">Nama Kandidat</th>
-                        {view === "royal" && <th className="py-4 px-2 md:px-4 font-semibold">Instansi/Perusahaan</th>}
+                        {view === "awards" && <th className="py-4 px-2 md:px-4 font-semibold">Instansi/Perusahaan</th>}
                         </tr>
                     </thead>
                     <tbody className="text-sm">
@@ -824,13 +884,13 @@ export default function Home() {
                         <tr key={p.id} className="hover:bg-white/5 border-b border-white/5 last:border-0 transition-colors group">
                             <td className="py-3 px-2 md:px-4 text-slate-500 font-mono group-hover:text-blue-400 transition-colors">{i + 1}</td>
                             <td className="py-3 px-2 md:px-4 font-medium text-slate-200 group-hover:text-white">{p.name}</td>
-                            {view === "royal" && (
-                            <td className="py-3 px-2 md:px-4 text-slate-400">{(p as RoyalCandidate).company}</td>
+                            {view === "awards" && (
+                            <td className="py-3 px-2 md:px-4 text-slate-400">{(p as AwardNominee).company}</td>
                             )}
                         </tr>
                         ))}
                         {modalData.length === 0 && (
-                        <tr><td colSpan={view === "royal" ? 3 : 2} className="text-center py-12 text-slate-500">Database Kosong</td></tr>
+                        <tr><td colSpan={view === "awards" ? 3 : 2} className="text-center py-12 text-slate-500">Database Kosong</td></tr>
                         )}
                     </tbody>
                     </table>
@@ -889,20 +949,17 @@ export default function Home() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 w-full max-w-5xl px-4">
-
-                {/* CARD 1: ROYAL */}
-                <button onClick={() => handleAccessRequest("royal")} className="group relative h-64 md:h-80 rounded-[2rem] overflow-hidden border border-white/10 bg-slate-900/40 backdrop-blur-sm transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_0_50px_rgba(234,179,8,0.2)] text-left">
+                {/* CARD 1: AWARDS */}
+                <button onClick={() => handleAccessRequest("awards")} className="group relative h-64 md:h-80 rounded-[2rem] overflow-hidden border border-white/10 bg-slate-900/40 backdrop-blur-sm transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_0_50px_rgba(234,179,8,0.2)] text-left">
                   <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 via-transparent to-transparent opacity-50 group-hover:opacity-100 transition-opacity"></div>
-                  <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
-
                   <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-end">
-                    <Trophy className="absolute top-6 right-6 md:top-8 md:right-8 text-yellow-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-yellow-500/40 group-hover:scale-110 group-hover:rotate-6 transition-all duration-500 transform-gpu" />
+                    <Medal className="absolute top-6 right-6 md:top-8 md:right-8 text-yellow-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-yellow-500/40 group-hover:scale-110 group-hover:rotate-6 transition-all duration-500 transform-gpu" />
                     <div className="space-y-2">
-                      <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isRoyalCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-yellow-500/20 border-yellow-500/30 text-yellow-300'}`}>
-                        {isRoyalCompleted ? <><Sparkles size={12} /> COMPLETED</> : (config.royalStatus === 'closed' ? <><Lock size={12} /> Locked</> : <><Sparkles size={12} /> Awards</>)}
+                      <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isAwardCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-yellow-500/20 border-yellow-500/30 text-yellow-300'}`}>
+                        {isAwardCompleted ? <><Sparkles size={12} /> COMPLETED</> : (config.awardStatus === 'closed' ? <><Lock size={12} /> Locked</> : <><Sparkles size={12} /> Awards</>)}
                       </div>
-                      <h2 className="text-2xl md:text-5xl font-bold text-white group-hover:text-yellow-200 transition-colors">Royal Top 6</h2>
-                      <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-sm md:text-lg max-w-sm">Pengungkapan eksklusif peringkat tertinggi tahun ini.</p>
+                      <h2 className="text-2xl md:text-5xl font-bold text-white group-hover:text-yellow-200 transition-colors">Awards Night</h2>
+                      <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-sm md:text-lg max-w-sm">Pengungkapan penghargaan kategori terbaik tahun ini.</p>
                     </div>
                   </div>
                 </button>
@@ -910,8 +967,6 @@ export default function Home() {
                 {/* CARD 2: DOORPRIZE */}
                 <button onClick={() => handleAccessRequest("doorprize")} className="group relative h-64 md:h-80 rounded-[2rem] overflow-hidden border border-white/10 bg-slate-900/40 backdrop-blur-sm transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_0_50px_rgba(6,182,212,0.2)] text-left">
                   <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent opacity-50 group-hover:opacity-100 transition-opacity"></div>
-                  <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
-
                   <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-end">
                     <Gift className="absolute top-6 right-6 md:top-8 md:right-8 text-cyan-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-cyan-500/40 group-hover:scale-110 group-hover:-rotate-6 transition-all duration-500 transform-gpu" />
                     <div className="space-y-2">
@@ -927,29 +982,32 @@ export default function Home() {
             </motion.div>
           )}
 
-          {/* VIEW: ROYAL REVEAL */}
-          {view === "royal" && (
-            <motion.div key="royal" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center w-full max-w-6xl mx-auto">
+          {/* VIEW: AWARDS REVEAL */}
+          {view === "awards" && (
+            <motion.div key="awards" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center w-full max-w-6xl mx-auto">
 
-              <CountdownTimer targetDate={config.royalStart} title="Waktu Menuju Royal Reveal" theme="gold" />
+              <CountdownTimer targetDate={config.awardStart} title="Waktu Menuju Awards" theme="gold" />
 
               <div className="w-full min-h-[400px] mb-8 md:mb-12 flex flex-col items-center justify-center relative perspective-1000">
 
                 {/* 1. STATE: BELUM REVEAL */}
-                {!isRoyalSpinning && !revealedRoyalWinner && !pendingRoyal && royalStep < mergedRoyalWinners.length && (
+                {!isAwardSpinning && !revealedAwardWinner && !pendingAward && awardStep < mergedAwardWinners.length && (
                   <div className="bg-slate-900/50 backdrop-blur-xl rounded-[2.5rem] p-6 md:p-16 border border-white/10 text-center w-full max-w-3xl hover:border-yellow-500/50 transition-all shadow-2xl relative overflow-hidden group">
                     <div className="absolute inset-0 bg-gradient-to-b from-yellow-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-
                     <div className="relative z-10">
                       <div className="w-16 h-16 md:w-24 md:h-24 mx-auto mb-6 md:mb-8 bg-slate-800 rounded-full flex items-center justify-center border border-white/10 group-hover:scale-110 transition-transform shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-                        <Search className="text-yellow-500 w-8 h-8 md:w-10 md:h-10 animate-pulse" />
+                        <Trophy className="text-yellow-500 w-8 h-8 md:w-10 md:h-10 animate-pulse" />
                       </div>
-                      <h3 className="text-2xl md:text-5xl font-bold text-white mb-4">Siapakah Rank <span className="text-yellow-400">#{mergedRoyalWinners[royalStep].rank}</span>?</h3>
-                      <p className="text-slate-400 text-sm md:text-lg mb-8 max-w-lg mx-auto">Sistem telah mengunci data kandidat. Klik tombol di bawah untuk mengungkap identitas pemenang.</p>
-
+                      <h3 className="text-xl md:text-3xl font-bold text-white mb-2">{mergedAwardWinners[awardStep].category}</h3>
+                      <h2 className="text-2xl md:text-5xl font-black text-yellow-400 mb-6 uppercase tracking-wider">
+                          JUARA {mergedAwardWinners[awardStep].rank}
+                      </h2>
+                      <p className="text-slate-400 text-sm md:text-lg mb-8 max-w-lg mx-auto">
+                          Sistem telah menerima data pemenang dari Panel. Klik tombol di bawah untuk mengungkap identitas pemenang.
+                      </p>
                       <TimeDependentButton
-                        targetDate={config.royalStart}
-                        onClick={handleRoyalReveal}
+                        targetDate={config.awardStart}
+                        onClick={handleAwardReveal}
                         text="UNGKAP PEMENANG"
                         icon={<Sparkles size={20} className="inline mr-2" />}
                         theme="gold"
@@ -959,11 +1017,11 @@ export default function Home() {
                 )}
 
                 {/* 2. STATE: SPINNING / PENDING */}
-                {(isRoyalSpinning || pendingRoyal) && (
+                {(isAwardSpinning || pendingAward) && (
                   <div className="w-full max-w-4xl h-[400px] flex flex-col items-center justify-center relative">
                     <div className="absolute inset-0 bg-yellow-500/5 blur-[100px] rounded-full animate-pulse transform-gpu"></div>
-                    {isRoyalSpinning ? (
-                      <div className="text-yellow-500 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 animate-pulse uppercase">Mendapatkan Nama...</div>
+                    {isAwardSpinning ? (
+                      <div className="text-yellow-500 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 animate-pulse uppercase">Mengungkap Data...</div>
                     ) : (
                       <div className="text-green-400 font-mono text-xs md:text-sm tracking-[0.5em] mb-6 uppercase">Winner Found!</div>
                     )}
@@ -974,35 +1032,21 @@ export default function Home() {
                 )}
 
                 {/* 3. STATE: REVEALED */}
-                {revealedRoyalWinner && (
+                {revealedAwardWinner && (
                   <div className="relative w-full max-w-4xl px-4">
-                    {/* GOD RAYS BEHIND CARD - Optimized */}
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-                      className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.1)_90deg,transparent_180deg)] rounded-full z-0 pointer-events-none transform-gpu will-change-transform"
-                    />
-
-                    {/* 3D CONFETTI RIBBONS - Optimized with will-change-transform */}
+                    {/* GOD RAYS & CONFETTI */}
+                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 15, repeat: Infinity, ease: "linear" }} className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.1)_90deg,transparent_180deg)] rounded-full z-0 pointer-events-none transform-gpu will-change-transform" />
                     <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden h-[200%] -top-[50%]">
                       {confettiParticles.map((p, i) => (
                         <motion.div
                           key={i}
                           initial={{ y: -50, x: 0, opacity: 1, rotate: 0 }}
                           animate={{
-                            y: '100vh',
-                            x: p.sway,
-                            rotateX: p.rotation * 2,
-                            rotateY: p.rotation * 2,
-                            rotateZ: p.rotation
+                            y: '100vh', x: p.sway, rotateX: p.rotation * 2, rotateY: p.rotation * 2, rotateZ: p.rotation
                           }}
                           transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
                           className={`absolute ${p.color} will-change-transform`}
-                          style={{
-                            left: `${p.x}%`,
-                            width: p.width,
-                            height: p.height
-                          }}
+                          style={{ left: `${p.x}%`, width: p.width, height: p.height }}
                         />
                       ))}
                     </div>
@@ -1013,35 +1057,32 @@ export default function Home() {
                       transition={{ type: "spring", bounce: 0.4, duration: 1.5 }}
                       className="bg-gradient-to-br from-slate-900 to-black rounded-[2rem] md:rounded-[3rem] p-1 border border-yellow-500/50 shadow-[0_0_100px_rgba(234,179,8,0.3)] relative overflow-hidden z-10 w-full"
                     >
-                      <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-30 mix-blend-overlay"></div>
-                      <div className="absolute -top-40 -right-40 w-96 h-96 bg-yellow-600/30 rounded-full blur-[80px] transform-gpu"></div>
-
                       <div className="bg-slate-950/80 backdrop-blur-3xl rounded-[1.8rem] md:rounded-[2.8rem] p-6 md:p-12 text-center md:text-left flex flex-col md:flex-row items-center gap-6 md:gap-10 relative z-10">
                         <div className="relative shrink-0">
                           <div className="absolute inset-0 bg-yellow-500 blur-[60px] opacity-40 animate-pulse transform-gpu"></div>
                           <Medal className="text-yellow-400 w-32 h-32 md:w-56 md:h-56 drop-shadow-2xl relative z-10" strokeWidth={1} />
                           <div className="absolute inset-0 flex items-center justify-center z-20 pt-4">
-                            <span className="text-5xl md:text-8xl font-black text-white drop-shadow-md">#{revealedRoyalWinner.rank}</span>
+                            <span className="text-5xl md:text-8xl font-black text-white drop-shadow-md">#{revealedAwardWinner.rank}</span>
                           </div>
                         </div>
                         <div className="flex-1 min-w-0 w-full">
                           <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }}>
                             <div className="inline-block px-4 py-1 bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 rounded-full text-xs md:text-sm font-bold uppercase tracking-wider mb-4">
-                              {revealedRoyalWinner.title}
+                              {revealedAwardWinner.category}
                             </div>
                             <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-black text-white leading-[1.1] md:leading-[0.9] mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-yellow-100 to-yellow-500 drop-shadow-lg break-words">
-                              {revealedRoyalWinner.name}
+                              {revealedAwardWinner.name}
                             </h1>
-                            <p className="text-lg md:text-3xl text-slate-400 font-light tracking-wide mb-8 break-words">{revealedRoyalWinner.company}</p>
+                            <p className="text-lg md:text-3xl text-slate-400 font-light tracking-wide mb-8 break-words">{revealedAwardWinner.company}</p>
 
                             <div className="h-px w-full bg-gradient-to-r from-yellow-500/50 to-transparent mb-8"></div>
 
-                            {royalStep < mergedRoyalWinners.length ? (
-                              <button onClick={handleRoyalReveal} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-white text-slate-900 rounded-full font-bold flex items-center justify-center gap-2 hover:bg-yellow-400 hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,255,255,0.3)] text-sm md:text-base">
-                                Lanjut ke Rank #{mergedRoyalWinners[royalStep].rank} <ChevronRight size={20} />
+                            {awardStep < mergedAwardWinners.length ? (
+                              <button onClick={handleAwardReveal} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-white text-slate-900 rounded-full font-bold flex items-center justify-center gap-2 hover:bg-yellow-400 hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,255,255,0.3)] text-sm md:text-base">
+                                Lanjut: {mergedAwardWinners[awardStep].category} (Rank #{mergedAwardWinners[awardStep].rank}) <ChevronRight size={20} />
                               </button>
                             ) : (
-                              <button onClick={() => setRevealedRoyalWinner(null)} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-green-500 text-white rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2 text-sm md:text-base">
+                              <button onClick={() => setRevealedAwardWinner(null)} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-green-500 text-white rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2 text-sm md:text-base">
                                 <PartyPopper size={20} /> SELESAI & REKAP
                               </button>
                             )}
@@ -1052,68 +1093,121 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* 4. STATE: ALL COMPLETED */}
-                {!isRoyalSpinning && !revealedRoyalWinner && !pendingRoyal && royalStep >= mergedRoyalWinners.length && (
-                  <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-gradient-to-b from-purple-900/50 to-slate-900/80 backdrop-blur-xl border border-purple-500/30 rounded-[3rem] p-8 md:p-16 shadow-2xl text-center w-full max-w-4xl relative overflow-hidden">
-                    <div className="absolute inset-0 pointer-events-none z-0">
-                      {confettiParticles.map((p, i) => (
-                        <motion.div
-                          key={i}
-                          initial={{ y: -50, x: 0, opacity: 1, rotate: 0 }}
-                          animate={{
-                            y: '100vh',
-                            x: p.sway,
-                            rotateX: p.rotation * 2,
-                            rotateY: p.rotation * 2,
-                            rotateZ: p.rotation
-                          }}
-                          transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
-                          className={`absolute ${p.color} will-change-transform`}
-                          style={{
-                            left: `${p.x}%`,
-                            width: p.width,
-                            height: p.height
-                          }}
-                        />
-                      ))}
+                {/* 4. STATE: ALL COMPLETED - PODIUM */}
+                {!isAwardSpinning && !revealedAwardWinner && !pendingAward && awardStep >= mergedAwardWinners.length && (
+                  <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center w-full">
+                    <div className="bg-gradient-to-b from-purple-900/50 to-slate-900/80 backdrop-blur-xl border border-purple-500/30 rounded-[3rem] p-8 md:p-12 shadow-2xl text-center w-full max-w-4xl relative overflow-hidden mb-16">
+                        <div className="absolute inset-0 pointer-events-none z-0">
+                          {confettiParticles.map((p, i) => (
+                            <motion.div
+                              key={i}
+                              initial={{ y: -50, x: 0, opacity: 1, rotate: 0 }}
+                              animate={{ y: '100vh', x: p.sway, rotateX: p.rotation * 2, rotateY: p.rotation * 2, rotateZ: p.rotation }}
+                              transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
+                              className={`absolute ${p.color} will-change-transform`}
+                              style={{ left: `${p.x}%`, width: p.width, height: p.height }}
+                            />
+                          ))}
+                        </div>
+                        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+                        <div className="relative z-10">
+                          <Crown className="w-16 h-16 md:w-20 md:h-20 mx-auto mb-4 text-yellow-400 drop-shadow-[0_0_20px_rgba(234,179,8,0.6)] animate-bounce" />
+                          <h2 className="text-3xl md:text-5xl font-black text-white mb-4">HALL OF FAME LENGKAP!</h2>
+                          <p className="text-slate-300 text-sm md:text-base mb-8 max-w-2xl mx-auto">Selamat kepada seluruh penerima penghargaan.</p>
+                          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                            <button onClick={triggerCelebration} className="px-8 py-3 bg-purple-600 text-white rounded-full font-bold text-lg shadow-lg hover:bg-purple-500 hover:scale-105 transition-transform flex items-center justify-center gap-2 relative z-20"><PartyPopper /> RAYAKAN</button>
+                          </div>
+                        </div>
                     </div>
-                    <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
-                    <div className="relative z-10">
-                      <Crown className="w-16 h-16 md:w-24 md:h-24 mx-auto mb-6 text-yellow-400 drop-shadow-[0_0_20px_rgba(234,179,8,0.6)] animate-bounce" />
-                      <h2 className="text-3xl md:text-6xl font-black text-white mb-6">HALL OF FAME LENGKAP!</h2>
-                      <p className="text-slate-300 text-sm md:text-lg mb-10 max-w-2xl mx-auto">Selamat kepada seluruh pemenang Royal Top 6. Prestasi luar biasa untuk pencapaian yang gemilang.</p>
-                      <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                        <button onClick={triggerCelebration} className="px-8 py-4 bg-purple-600 text-white rounded-full font-bold text-lg shadow-lg hover:bg-purple-500 hover:scale-105 transition-transform flex items-center justify-center gap-2 relative z-20"><PartyPopper /> RAYAKAN</button>
-                      </div>
+
+                    {/* PODIUM RECAP */}
+                    <div className="w-full flex flex-col gap-20 pb-20">
+                      {Array.from(new Set(mergedAwardWinners.map(w => w.category))).map((categoryName) => {
+                          const categoryWinners = mergedAwardWinners.filter(w => w.category === categoryName);
+                          const rank1 = categoryWinners.find(w => w.rank === 1);
+                          const rank2 = categoryWinners.find(w => w.rank === 2);
+                          const rank3 = categoryWinners.find(w => w.rank === 3);
+                          const others = categoryWinners.filter(w => w.rank > 3);
+
+                          return (
+                             <div key={categoryName} className="flex flex-col items-center">
+                                <div className="inline-block px-6 py-2 bg-slate-800/80 rounded-full border border-white/10 text-xl font-bold text-white mb-8 shadow-lg backdrop-blur-sm">
+                                   {categoryName}
+                                </div>
+                                
+                                <div className="flex flex-wrap items-end justify-center gap-4 md:gap-8 min-h-[350px]">
+                                    {/* RANK 2 */}
+                                    {rank2 && (
+                                      <div className="flex flex-col items-center order-2 md:order-1">
+                                          <div className="text-center mb-3">
+                                            <div className="text-white font-bold text-sm md:text-base">{rank2.name}</div>
+                                            <div className="text-slate-400 text-xs">{rank2.company}</div>
+                                          </div>
+                                          <div className="w-24 md:w-32 h-32 md:h-48 bg-gradient-to-t from-slate-700/80 to-slate-500/20 border-t border-x border-slate-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_30px_rgba(148,163,184,0.1)]">
+                                            <div className="absolute top-0 left-0 right-0 h-1 bg-white/20"></div>
+                                            <div className="text-4xl md:text-5xl font-black text-slate-300 opacity-50">2</div>
+                                          </div>
+                                          <div className="mt-4 w-12 h-12 md:w-16 md:h-16 rounded-full bg-slate-300 flex items-center justify-center text-slate-900 font-bold border-4 border-slate-700 shadow-lg z-10 -mt-10">
+                                              <span className="text-xl">#2</span>
+                                          </div>
+                                      </div>
+                                    )}
+
+                                    {/* RANK 1 */}
+                                    {rank1 && (
+                                      <div className="flex flex-col items-center order-1 md:order-2 z-10">
+                                          <div className="text-center mb-16 relative z-20">
+                                            <div className="text-yellow-300 font-bold text-lg md:text-xl drop-shadow-md">{rank1.name}</div>
+                                            <div className="text-yellow-500/80 text-sm">{rank1.company}</div>
+                                          </div>
+                                          <div className="w-28 md:w-40 h-40 md:h-64 bg-gradient-to-t from-yellow-700/80 to-yellow-500/20 border-t border-x border-yellow-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_50px_rgba(234,179,8,0.3)]">
+                                            <div className="absolute top-0 left-0 right-0 h-1 bg-yellow-200/40"></div>
+                                            <div className="absolute -top-10 animate-bounce">
+                                                <Crown className="text-yellow-400 fill-yellow-400/20" size={40} />
+                                            </div>
+                                            <div className="text-5xl md:text-7xl font-black text-yellow-500 opacity-50">1</div>
+                                          </div>
+                                          <div className="mt-4 w-16 h-16 md:w-20 md:h-20 rounded-full bg-yellow-400 flex items-center justify-center text-yellow-900 font-bold border-4 border-yellow-600 shadow-xl z-10 -mt-12 scale-110">
+                                              <Trophy size={28} />
+                                          </div>
+                                      </div>
+                                    )}
+
+                                    {/* RANK 3 */}
+                                    {rank3 && (
+                                      <div className="flex flex-col items-center order-3">
+                                          <div className="text-center mb-3">
+                                            <div className="text-white font-bold text-sm md:text-base">{rank3.name}</div>
+                                            <div className="text-slate-400 text-xs">{rank3.company}</div>
+                                          </div>
+                                          <div className="w-24 md:w-32 h-24 md:h-36 bg-gradient-to-t from-orange-800/80 to-orange-600/20 border-t border-x border-orange-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_30px_rgba(194,65,12,0.1)]">
+                                            <div className="absolute top-0 left-0 right-0 h-1 bg-white/20"></div>
+                                            <div className="text-4xl md:text-5xl font-black text-orange-400 opacity-50">3</div>
+                                          </div>
+                                          <div className="mt-4 w-12 h-12 md:w-16 md:h-16 rounded-full bg-orange-400 flex items-center justify-center text-orange-900 font-bold border-4 border-orange-700 shadow-lg z-10 -mt-10">
+                                              <span className="text-xl">#3</span>
+                                          </div>
+                                      </div>
+                                    )}
+                                </div>
+                                {others.length > 0 && (
+                                    <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl">
+                                        {others.map(other => (
+                                            <div key={other.id} className="bg-slate-800/40 border border-white/5 p-3 rounded-xl flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">#{other.rank}</div>
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-200">{other.name}</div>
+                                                    <div className="text-xs text-slate-500">{other.company}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                             </div>
+                          )
+                      })}
                     </div>
                   </motion.div>
-                )}
-              </div>
-
-              {/* LIST GRID */}
-              <div className="w-full mt-8 px-4">
-                <h3 className="text-slate-400 text-xs md:text-sm font-bold uppercase tracking-widest mb-6 text-center md:text-left">Daftar Penerima Award</h3>
-                
-                {mergedRoyalWinners.slice(0, royalStep).length === 0 ? (
-                  <div className="w-full py-12 rounded-2xl border border-white/5 bg-slate-900/30 flex flex-col items-center justify-center text-center">
-                      <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-4 shadow-inner border border-white/5">
-                        <Trophy className="text-slate-600" size={32} />
-                      </div>
-                      <p className="text-slate-400 font-medium">Belum ada pemenang yang diungkap.</p>
-                      <p className="text-slate-600 text-sm mt-1">Data akan muncul otomatis setelah pengundian.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {mergedRoyalWinners.slice(0, royalStep).map((w) => (
-                      <motion.div key={w.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-slate-800/40 backdrop-blur border border-white/5 p-4 rounded-2xl flex items-center gap-4 hover:bg-slate-800/60 hover:border-yellow-500/30 transition-all group">
-                        <div className="w-12 h-12 bg-yellow-500/10 rounded-xl flex items-center justify-center font-black text-yellow-500 text-lg shrink-0 border border-yellow-500/20 group-hover:bg-yellow-500 group-hover:text-slate-900 transition-colors">#{w.rank}</div>
-                        <div className="min-w-0">
-                          <div className="font-bold text-slate-100 truncate group-hover:text-yellow-200">{w.name}</div>
-                          <div className="text-xs text-slate-400 truncate">{w.company}</div>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
                 )}
               </div>
             </motion.div>
@@ -1122,12 +1216,11 @@ export default function Home() {
           {/* VIEW: DOORPRIZE */}
           {view === "doorprize" && (
             <motion.div key="doorprize" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col xl:flex-row gap-8 w-full max-w-[1600px] mx-auto pb-10">
-
+              
               <div className="w-full xl:w-2/3 order-1 flex flex-col gap-8">
-
                 <CountdownTimer targetDate={config.doorprizeStart} title="Waktu Menuju Doorprize" theme="cyan" />
 
-                {/* --- 1. DAFTAR HADIAH (Modern Grid) --- */}
+                {/* --- GRID HADIAH --- */}
                 <div className="bg-slate-900/50 backdrop-blur-md rounded-3xl border border-white/10 p-4 md:p-6">
                   <h3 className="text-sm font-bold text-cyan-400 mb-6 flex items-center gap-2 uppercase tracking-wide">
                     <PackageOpen size={18} /> Hadiah
@@ -1162,18 +1255,14 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* --- 2. SPIN MACHINE --- */}
+                {/* --- SPIN AREA --- */}
                 {!isSpinning && !winner ? (
                   <div className="bg-gradient-to-br from-slate-900 to-slate-950 rounded-[3rem] p-6 md:p-10 border border-cyan-500/20 shadow-[0_0_60px_rgba(6,182,212,0.1)] flex flex-col items-center justify-center min-h-[300px] md:min-h-[350px] relative overflow-hidden">
                     <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2032%2032%27%20width=%2732%27%20height=%2732%27%20fill=%27none%27%20stroke=%27rgb(6%20182%20212%20/%200.2)%27%3e%3cpath%20d=%27M0%20.5H31.5V32%27/%3e%3c/svg%3e')] opacity-10"></div>
                     <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }} className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,cyan_360deg)] opacity-5 blur-[100px] transform-gpu will-change-transform"></motion.div>
 
                     <div className="relative z-10 text-center w-full max-w-lg">
-                      <motion.div
-                        animate={{ y: [0, -15, 0] }}
-                        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                        className="w-24 h-24 md:w-32 md:h-32 mx-auto mb-6 md:mb-8 bg-cyan-950 rounded-full flex items-center justify-center border-4 border-cyan-500/30 shadow-[0_0_30px_rgba(6,182,212,0.4)]"
-                      >
+                      <motion.div animate={{ y: [0, -15, 0] }} transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }} className="w-24 h-24 md:w-32 md:h-32 mx-auto mb-6 md:mb-8 bg-cyan-950 rounded-full flex items-center justify-center border-4 border-cyan-500/30 shadow-[0_0_30px_rgba(6,182,212,0.4)]">
                         <Zap className="text-cyan-400 w-12 h-12 md:w-16 md:h-16 drop-shadow-[0_0_10px_rgba(6,182,212,0.8)]" />
                       </motion.div>
 
@@ -1192,24 +1281,13 @@ export default function Home() {
                 ) : (isSpinning || pendingDoorprize) ? (
                   <div className="bg-black/40 backdrop-blur-xl rounded-[3rem] p-8 md:p-12 border border-cyan-500/50 shadow-[0_0_100px_rgba(6,182,212,0.2)] min-h-[300px] md:min-h-[450px] flex flex-col items-center justify-center text-center relative overflow-hidden">
                     <div className="absolute inset-0 bg-cyan-500/5 animate-pulse transform-gpu"></div>
-
-                    {/* HYPERSPACE EFFECT */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
-                      <motion.div
-                        animate={{ scale: [1, 2], opacity: [0, 1, 0] }}
-                        transition={{ duration: 0.5, repeat: Infinity }}
-                        className="w-64 h-64 md:w-96 md:h-96 border-4 border-cyan-500 rounded-full will-change-transform"
-                      />
-                      <motion.div
-                        animate={{ scale: [0.5, 2], opacity: [0, 1, 0] }}
-                        transition={{ duration: 0.5, delay: 0.2, repeat: Infinity }}
-                        className="absolute w-64 h-64 md:w-96 md:h-96 border-2 border-white rounded-full will-change-transform"
-                      />
+                      <motion.div animate={{ scale: [1, 2], opacity: [0, 1, 0] }} transition={{ duration: 0.5, repeat: Infinity }} className="w-64 h-64 md:w-96 md:h-96 border-4 border-cyan-500 rounded-full will-change-transform" />
+                      <motion.div animate={{ scale: [0.5, 2], opacity: [0, 1, 0] }} transition={{ duration: 0.5, delay: 0.2, repeat: Infinity }} className="absolute w-64 h-64 md:w-96 md:h-96 border-2 border-white rounded-full will-change-transform" />
                     </div>
 
                     <p className="text-cyan-400 font-mono tracking-[0.2em] md:tracking-[0.5em] text-xs md:text-sm mb-6 md:mb-8 animate-pulse relative z-10">MENGACAK PESERTA...</p>
                     <h2 className="text-4xl sm:text-5xl md:text-8xl font-black text-white break-all w-full blur-[1px] relative z-10 leading-tight will-change-[opacity]">
-                      {/* Pulse Effect on Text */}
                       <motion.span animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 0.1, repeat: Infinity }}>
                         {rollingName}
                       </motion.span>
@@ -1217,47 +1295,27 @@ export default function Home() {
                   </div>
                 ) : (
                   <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="bg-gradient-to-b from-slate-900 to-black rounded-[3rem] p-6 md:p-12 border-2 border-cyan-400 shadow-[0_0_100px_rgba(6,182,212,0.4)] text-center relative overflow-hidden min-h-[400px] md:min-h-[450px] flex flex-col items-center justify-center">
-                    {/* 3D Confetti - Optimized */}
                     <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
                       {confettiParticles.map((p, i) => (
                         <motion.div
                           key={i}
                           initial={{ y: -50, x: 0, opacity: 1, rotate: 0 }}
                           animate={{
-                            y: '100vh',
-                            x: p.sway,
-                            rotateX: p.rotation * 2,
-                            rotateY: p.rotation * 2,
-                            rotateZ: p.rotation
+                            y: '100vh', x: p.sway, rotateX: p.rotation * 2, rotateY: p.rotation * 2, rotateZ: p.rotation
                           }}
                           transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
                           className={`absolute ${p.color} will-change-transform`}
-                          style={{
-                            left: `${p.x}%`,
-                            width: p.width,
-                            height: p.height
-                          }}
+                          style={{ left: `${p.x}%`, width: p.width, height: p.height }}
                         />
                       ))}
                     </div>
-
-                    {/* GOD RAYS */}
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                      className="absolute z-0 -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(6,182,212,0.15)_90deg,transparent_180deg)] rounded-full transform-gpu will-change-transform"
-                    />
+                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }} className="absolute z-0 -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(6,182,212,0.15)_90deg,transparent_180deg)] rounded-full transform-gpu will-change-transform" />
                     <div className="relative z-10 w-full max-w-2xl">
                       <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="inline-flex items-center gap-2 px-4 py-1.5 md:px-6 md:py-2 rounded-full bg-cyan-500/20 border border-cyan-500/50 text-cyan-300 font-bold mb-6 md:mb-8 shadow-[0_0_20px_rgba(6,182,212,0.3)] text-xs md:text-base">
                         <Gift size={18} /> SELAMAT KEPADA
                       </motion.div>
 
-                      <motion.h1
-                        initial={{ scale: 0.5 }}
-                        animate={{ scale: [1, 1.1, 1] }}
-                        transition={{ duration: 0.5 }}
-                        className="text-4xl sm:text-5xl md:text-7xl font-black text-white mb-8 md:mb-10 drop-shadow-lg break-words"
-                      >
+                      <motion.h1 initial={{ scale: 0.5 }} animate={{ scale: [1, 1.1, 1] }} transition={{ duration: 0.5 }} className="text-4xl sm:text-5xl md:text-7xl font-black text-white mb-8 md:mb-10 drop-shadow-lg break-words">
                         {winner?.name}
                       </motion.h1>
 
@@ -1285,7 +1343,7 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Right Column: History */}
+              {/* RIGHT: HISTORY */}
               <div className="w-full xl:w-1/3 order-2">
                 <div className="bg-slate-900/60 backdrop-blur-md rounded-[2.5rem] border border-white/10 shadow-xl overflow-hidden h-[400px] xl:h-[800px] flex flex-col relative">
                   <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/5 to-transparent pointer-events-none"></div>

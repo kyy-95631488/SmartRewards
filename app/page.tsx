@@ -1,13 +1,13 @@
 // app/page.tsx
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useLayoutEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Crown, Gift, ArrowLeft, Trophy, ChevronRight,
+  Crown, Gift, ArrowLeft, Trophy, ChevronRight, ChevronLeft,
   Medal, Zap, List, X, History, PartyPopper,
   Box, PackageOpen, Clock, Calendar, Sparkles, Lock, Save, RotateCcw,
-  Volume2, VolumeX
+  Volume2, VolumeX, BarChart3, PauseCircle, PlayCircle
 } from "lucide-react";
 
 // --- FIREBASE IMPORTS ---
@@ -157,6 +157,14 @@ export default function Home() {
   const [revealedAwardWinner, setRevealedAwardWinner] = useState<MergedAwardWinner | null>(null);
   const [confettiParticles, setConfettiParticles] = useState<Particle[]>([]);
 
+  // --- STATE BARU UNTUK PODIUM KATEGORI ---
+  const [showCategoryPodium, setShowCategoryPodium] = useState(false);
+  const [categoryPodiumName, setCategoryPodiumName] = useState<string | null>(null);
+
+  // --- CAROUSEL STATE ---
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [isCarouselPaused, setIsCarouselPaused] = useState(false);
+
   // Memoized Stars
   const [stars] = useState<Star[]>(() => Array.from({ length: 50 }).map((_, i) => ({
     id: i,
@@ -178,7 +186,6 @@ export default function Home() {
   const bgmFadeInterval = useRef<NodeJS.Timeout | null>(null);
 
   const [isMuted, setIsMuted] = useState(false);
-  // Tambahan Ref untuk sinkronisasi mute realtime di dalam interval/timeout
   const isMutedRef = useRef(false);
 
   // --- INITIALIZE VISUALS & AUDIO ---
@@ -195,7 +202,7 @@ export default function Home() {
       }
       if (!winAudioRef.current) {
         winAudioRef.current = new Audio("/sounds/win.mp3");
-        winAudioRef.current.volume = 1.0;
+        winAudioRef.current.volume = 0.6;
       }
       if (!bgmAudioRef.current) {
         bgmAudioRef.current = new Audio("/sounds/backsound.mp3");
@@ -205,7 +212,6 @@ export default function Home() {
     }
 
     const startAudioOnInteraction = () => {
-      // Cek isMutedRef untuk memastikan tidak play jika user sudah mute
       if (bgmAudioRef.current && bgmAudioRef.current.paused && !isMutedRef.current) {
         bgmAudioRef.current.play().catch(e => console.log("Autoplay blocked:", e));
       }
@@ -225,11 +231,9 @@ export default function Home() {
         }
       });
     }
-  }, []); // Empty dependency array intentionally
+  }, []);
 
   // --- IMPROVED AUDIO HELPERS ---
-    
-  // Fungsi Helper untuk mematikan paksa semua suara
   const stopAllSounds = () => {
     [spinAudioRef, clapAudioRef, winAudioRef, bgmAudioRef].forEach(ref => {
         if (ref.current) {
@@ -240,7 +244,6 @@ export default function Home() {
   };
 
   const smartPlay = (audioRef: React.MutableRefObject<HTMLAudioElement | null>) => {
-    // KUNCI PERBAIKAN: Cek Ref, bukan State, untuk nilai realtime
     if (isMutedRef.current) return; 
 
     if (audioRef.current) {
@@ -256,17 +259,14 @@ export default function Home() {
     }
   };
 
-  // Toggle Mute Logic yang lebih robust
   const toggleMute = () => {
     setIsMuted(prev => {
         const newState = !prev;
-        isMutedRef.current = newState; // Sync Ref
+        isMutedRef.current = newState;
 
         if (newState) {
-            // Jika Mute Aktif: Matikan SEMUA suara seketika
             stopAllSounds();
         } else {
-            // Jika Unmute: Nyalakan kembali BGM saja
             if (bgmAudioRef.current) {
                 bgmAudioRef.current.volume = 0.4;
                 bgmAudioRef.current.play().catch(() => {});
@@ -276,18 +276,15 @@ export default function Home() {
     });
   };
 
-  // Ducking System (Fade in/out BGM saat ada event)
+  // --- DUCKING SYSTEM ---
   useEffect(() => {
-    const isEffectPlaying = isSpinning || isAwardSpinning || pendingDoorprize || pendingAward || winner || revealedAwardWinner;
+    const isEffectPlaying = isSpinning || isAwardSpinning;
     const targetVolume = isEffectPlaying ? 0.05 : 0.4;
 
     if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
-
-    // Jangan jalankan logika fade jika sedang muted
     if (isMuted) return;
 
     if (bgmAudioRef.current) {
-        // Pastikan play jika tidak sengaja pause tapi tidak mute
         if (bgmAudioRef.current.paused && !isMuted) {
             bgmAudioRef.current.play().catch(() => {});
         }
@@ -296,14 +293,14 @@ export default function Home() {
             if (!bgmAudioRef.current) return;
             const currentVol = bgmAudioRef.current.volume;
               
-            // Safety check floating point
+            // Smooth Fade Transition
             if (Math.abs(currentVol - targetVolume) < 0.02) {
                 bgmAudioRef.current.volume = targetVolume;
                 if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
             } else if (currentVol > targetVolume) {
-                bgmAudioRef.current.volume = Math.max(0, currentVol - 0.02);
+                bgmAudioRef.current.volume = Math.max(0, currentVol - 0.05); // Fade out cepat
             } else {
-                bgmAudioRef.current.volume = Math.min(1, currentVol + 0.01);
+                bgmAudioRef.current.volume = Math.min(1, currentVol + 0.02); // Fade in halus
             }
         }, 50);
     }
@@ -311,7 +308,7 @@ export default function Home() {
     return () => {
         if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
     }
-  }, [isSpinning, isAwardSpinning, pendingDoorprize, pendingAward, winner, revealedAwardWinner, isMuted]);
+  }, [isSpinning, isAwardSpinning, isMuted]);
 
   const resetAll = () => {
     setWinner(null);
@@ -321,6 +318,8 @@ export default function Home() {
     setPendingAward(null);
     setConfettiParticles([]);
     setShowFlash(false);
+    setShowCategoryPodium(false);
+    setCategoryPodiumName(null);
     if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
 
     smartStop(spinAudioRef);
@@ -403,11 +402,9 @@ export default function Home() {
       setLoading(false);
     });
 
-    // --- FETCH AWARD HISTORY UNTUK SYNC STATE ---
     const unsubAwardHistory = onSnapshot(collection(db, "award_history"), (snapshot) => {
       const history = snapshot.docs.map(d => d.data());
       setAwardHistory(history);
-      // Auto-jump award step agar tidak perlu spin ulang jika data sudah ada
       if (history.length > 0) {
           setAwardStep(history.length);
       } else {
@@ -479,9 +476,21 @@ export default function Home() {
     });
   }, [awardSlots, awardNominees]);
 
+  // --- CAROUSEL LOGIC ---
+  const uniqueCategories = useMemo(() => Array.from(new Set(mergedAwardWinners.map(w => w.category))), [mergedAwardWinners]);
+
+  useEffect(() => {
+      // Auto-slide logic
+      if (view === "awards" && awardStep >= mergedAwardWinners.length && !isCarouselPaused && uniqueCategories.length > 1) {
+          const interval = setInterval(() => {
+              setCarouselIndex(prev => (prev + 1) % uniqueCategories.length);
+          }, 8000); // Ganti slide tiap 8 detik
+          return () => clearInterval(interval);
+      }
+  }, [view, awardStep, mergedAwardWinners.length, isCarouselPaused, uniqueCategories.length]);
+
   const totalItemsRemaining = useMemo(() => prizes.reduce((acc, curr) => acc + curr.stock, 0), [prizes]);
     
-  // LOGIC COMPLETED: Menggunakan Database History
   const isAwardCompleted = useMemo(() => {
       return mergedAwardWinners.length > 0 && awardHistory.length >= mergedAwardWinners.length;
   }, [mergedAwardWinners, awardHistory]);
@@ -492,7 +501,6 @@ export default function Home() {
 
   // --- AUTH NAVIGATION ---
   const handleAccessRequest = (targetView: "awards" | "doorprize") => {
-    // BYPASS LOGIC: Jika sudah completed, langsung izinkan akses
     if (targetView === "awards" && isAwardCompleted) { 
         setView(targetView); 
         return; 
@@ -502,7 +510,6 @@ export default function Home() {
         return; 
     }
     
-    // Normal Logic
     const status = targetView === "doorprize" ? config.doorprizeStatus : config.awardStatus;
     if (status === "closed") { alert("Sesi ini belum dibuka oleh Admin."); return; }
     
@@ -574,7 +581,6 @@ export default function Home() {
     }, 3000);
   };
 
-  // --- FEATURE: SAVE AWARD TO DB ---
   const confirmAwardWinner = async () => {
     if (!pendingAward) return;
     smartPlay(winAudioRef);
@@ -584,7 +590,6 @@ export default function Home() {
     triggerFlashEffect();
     setPendingAward(null);
 
-    // -- SAVE TO DB START --
     try {
         await addDoc(collection(db, "award_history"), {
             name: pendingAward.winner.name,
@@ -598,9 +603,6 @@ export default function Home() {
     } catch (error) {
         console.error("Failed to save award history:", error);
     }
-    // -- SAVE TO DB END --
-    
-    // Advance Step
     setAwardStep(prev => prev + 1);
   };
 
@@ -714,7 +716,7 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen relative flex flex-col items-center py-4 md:py-10 overflow-hidden font-sans text-slate-100 bg-slate-950 selection:bg-blue-500 selection:text-white">
+    <main className="min-h-screen relative flex flex-col items-center py-4 md:py-10 overflow-y-auto overflow-x-hidden font-sans text-slate-100 bg-slate-950 selection:bg-blue-500 selection:text-white">
 
       {/* --- FLASH EFFECT --- */}
       <AnimatePresence>
@@ -797,7 +799,7 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* --- MODAL KONFIRMASI (DOORPRIZE & AWARDS) - RECTANGULAR LAYOUT --- */}
+      {/* --- MODAL KONFIRMASI (DOORPRIZE & AWARDS) --- */}
       <AnimatePresence>
         {(pendingDoorprize || pendingAward) && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-y-auto">
@@ -809,7 +811,7 @@ export default function Home() {
               className="absolute z-0 w-[800px] h-[800px] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.2)_180deg,transparent_360deg)] rounded-full blur-3xl opacity-50 pointer-events-none transform-gpu will-change-transform"
             />
             
-            {/* MODAL CONTAINER - LEBAR DIKURANGI JADI MAX-W-3XL */}
+            {/* MODAL CONTAINER */}
             <motion.div 
               initial={{ scale: 0.5, y: 100 }} 
               animate={{ scale: 1, y: 0 }} 
@@ -822,15 +824,12 @@ export default function Home() {
                 {/* --- DOORPRIZE CONFIRMATION --- */}
                 {pendingDoorprize && (
                   <div className="flex flex-col items-center justify-center w-full">
-                    {/* Winner Name: Adjusted size (text-4xl) to not be too big */}
                     <h2 className="text-3xl md:text-4xl font-black text-white mb-2 drop-shadow-md break-words w-full leading-tight text-center">
                         {pendingDoorprize.winner.name}
                     </h2>
                     <div className="h-1 w-24 bg-gradient-to-r from-transparent via-cyan-500 to-transparent my-4"></div>
 
-                    {/* Prize Info Container - CENTERED LAYOUT */}
                     <div className="w-full bg-slate-950/50 rounded-2xl p-6 border border-white/5 mb-8 flex flex-col md:flex-row items-center justify-center gap-6 md:gap-8">
-                        {/* Prize Image */}
                         <div className="flex justify-center shrink-0">
                             {pendingDoorprize.prize.image_url ? (
                                 // eslint-disable-next-line @next/next/no-img-element
@@ -840,7 +839,6 @@ export default function Home() {
                             )}
                         </div>
                         
-                        {/* Prize Text Details - CENTERED */}
                         <div className="text-center md:text-left flex flex-col items-center md:items-start">
                            <p className="text-slate-400 text-sm mb-1 uppercase tracking-wider">Mendapatkan Hadiah:</p>
                            <h3 className="text-xl md:text-3xl font-bold text-cyan-400 leading-tight">
@@ -849,7 +847,6 @@ export default function Home() {
                         </div>
                     </div>
 
-                    {/* Action Buttons */}
                     <div className="flex flex-col sm:flex-row gap-4 w-full mx-auto">
                       <button onClick={retryDoorprize} className="flex-1 py-3 md:py-4 rounded-xl bg-slate-800 text-white hover:bg-slate-700 font-bold flex items-center justify-center gap-2 text-sm md:text-base transition-all"><RotateCcw size={18} /> Spin Ulang</button>
                       <button onClick={confirmDoorprizeWinner} className="flex-1 py-3 md:py-4 rounded-xl bg-gradient-to-r from-yellow-500 to-yellow-400 text-slate-900 hover:scale-105 font-bold flex items-center justify-center gap-2 shadow-lg text-sm md:text-base transition-all"><Save size={18} /> SAH & SIMPAN</button>
@@ -869,12 +866,10 @@ export default function Home() {
                         JUARA {pendingAward.winner.rank}
                     </div>
                     
-                    {/* Winner Name - Adjusted Size (text-4xl) */}
                     <h2 className="text-2xl md:text-3xl font-black text-white mb-3 drop-shadow-lg break-words w-full leading-tight text-center">
-  {pendingAward.winner.name}
-</h2>
+                      {pendingAward.winner.name}
+                    </h2>
 
-                    {/* Company Removed here */}
                     <div className="mb-10"></div> 
 
                     <div className="flex flex-col sm:flex-row gap-4 w-full mx-auto">
@@ -908,7 +903,6 @@ export default function Home() {
                         <tr className="text-xs text-slate-400 uppercase tracking-wider border-b border-white/10">
                         <th className="py-4 px-2 md:px-4 font-semibold w-12 md:w-16">No</th>
                         <th className="py-4 px-2 md:px-4 font-semibold">Nama Kandidat</th>
-                        {/* Company Column Header Removed */}
                         </tr>
                     </thead>
                     <tbody className="text-sm">
@@ -916,7 +910,6 @@ export default function Home() {
                         <tr key={p.id} className="hover:bg-white/5 border-b border-white/5 last:border-0 transition-colors group">
                             <td className="py-3 px-2 md:px-4 text-slate-500 font-mono group-hover:text-blue-400 transition-colors">{i + 1}</td>
                             <td className="py-3 px-2 md:px-4 font-medium text-slate-200 group-hover:text-white">{p.name}</td>
-                            {/* Company Column Cell Removed */}
                         </tr>
                         ))}
                         {modalData.length === 0 && (
@@ -978,18 +971,18 @@ export default function Home() {
                 </motion.div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 w-full max-w-5xl px-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 w-full max-w-7xl px-4">
                 {/* CARD 1: AWARDS */}
                 <button onClick={() => handleAccessRequest("awards")} className="group relative h-64 md:h-80 rounded-[2rem] overflow-hidden border border-white/10 bg-slate-900/40 backdrop-blur-sm transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_0_50px_rgba(234,179,8,0.2)] text-left">
                   <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 via-transparent to-transparent opacity-50 group-hover:opacity-100 transition-opacity"></div>
                   <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-end">
                     <Medal className="absolute top-6 right-6 md:top-8 md:right-8 text-yellow-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-yellow-500/40 group-hover:scale-110 group-hover:rotate-6 transition-all duration-500 transform-gpu" />
-                    <div className="space-y-2">
+                    <div className="space-y-2 relative z-20 max-w-[75%]">
                       <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isAwardCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-yellow-500/20 border-yellow-500/30 text-yellow-300'}`}>
                         {isAwardCompleted ? <><Sparkles size={12} /> COMPLETED</> : (config.awardStatus === 'closed' ? <><Lock size={12} /> Locked</> : <><Sparkles size={12} /> Awards</>)}
                       </div>
                       <h2 className="text-2xl md:text-5xl font-bold text-white group-hover:text-yellow-200 transition-colors">Awards</h2>
-                      <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-sm md:text-lg max-w-sm">Pengungkapan penghargaan kategori terbaik tahun ini.</p>
+                      <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-sm md:text-lg">Pengungkapan penghargaan kategori terbaik tahun ini.</p>
                     </div>
                   </div>
                 </button>
@@ -999,12 +992,12 @@ export default function Home() {
                   <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent opacity-50 group-hover:opacity-100 transition-opacity"></div>
                   <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-end">
                     <Gift className="absolute top-6 right-6 md:top-8 md:right-8 text-cyan-500/20 w-24 h-24 md:w-48 md:h-48 group-hover:text-cyan-500/40 group-hover:scale-110 group-hover:-rotate-6 transition-all duration-500 transform-gpu" />
-                    <div className="space-y-2">
+                    <div className="space-y-2 relative z-20 max-w-[75%]">
                       <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider mb-2 ${isDoorprizeCompleted ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-cyan-500/20 border-cyan-500/30 text-cyan-300'}`}>
                         {isDoorprizeCompleted ? <><Zap size={12} /> SOLD OUT</> : (config.doorprizeStatus === 'closed' ? <><Lock size={12} /> Locked</> : <><Zap size={12} /> Lucky Draw</>)}
                       </div>
                       <h2 className="text-2xl md:text-5xl font-bold text-white group-hover:text-cyan-200 transition-colors">Doorprize</h2>
-                      <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-sm md:text-lg max-w-sm">Putaran keberuntungan berhadiah menarik untuk semua.</p>
+                      <p className="text-slate-400 group-hover:text-slate-200 transition-colors text-sm md:text-lg">Putaran keberuntungan berhadiah menarik untuk semua.</p>
                     </div>
                   </div>
                 </button>
@@ -1021,7 +1014,7 @@ export default function Home() {
               <div className="w-full min-h-[400px] mb-8 md:mb-12 flex flex-col items-center justify-center relative perspective-1000">
 
                 {/* 1. STATE: BELUM REVEAL */}
-                {!isAwardSpinning && !revealedAwardWinner && !pendingAward && awardStep < mergedAwardWinners.length && (
+                {!isAwardSpinning && !revealedAwardWinner && !pendingAward && !showCategoryPodium && awardStep < mergedAwardWinners.length && (
                   <div className="bg-slate-900/50 backdrop-blur-xl rounded-[2.5rem] p-6 md:p-16 border border-white/10 text-center w-full max-w-3xl hover:border-yellow-500/50 transition-all shadow-2xl relative overflow-hidden group">
                     <div className="absolute inset-0 bg-gradient-to-b from-yellow-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
                     <div className="relative z-10">
@@ -1048,7 +1041,6 @@ export default function Home() {
 
                 {/* 2. STATE: SPINNING / PENDING */}
                 {(isAwardSpinning || pendingAward) && (
-                  // FIXED: Changed h-[400px] to min-h-[400px] to prevent text cutoff
                   <div className="w-full max-w-4xl min-h-[400px] py-10 flex flex-col items-center justify-center relative">
                     <div className="absolute inset-0 bg-yellow-500/5 blur-[100px] rounded-full animate-pulse transform-gpu"></div>
                     {isAwardSpinning ? (
@@ -1063,13 +1055,12 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* 3. STATE: REVEALED */}
-                {revealedAwardWinner && (
-                  // FIXED: Changed max-w-6xl to max-w-4xl for better centering
+                {/* 3. STATE: REVEALED (SINGLE WINNER) */}
+                {revealedAwardWinner && !showCategoryPodium && (
                   <div className="relative w-full max-w-4xl px-4">
                     {/* GOD RAYS & CONFETTI */}
                     <motion.div animate={{ rotate: 360 }} transition={{ duration: 15, repeat: Infinity, ease: "linear" }} className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.1)_90deg,transparent_180deg)] rounded-full z-0 pointer-events-none transform-gpu will-change-transform" />
-                    <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden h-[200%] -top-[50%]">
+                    <div className="absolute inset-0 pointer-events-none z-[100] overflow-hidden h-[200%] -top-[50%]">
                       {confettiParticles.map((p, i) => (
                         <motion.div
                           key={i}
@@ -1099,9 +1090,6 @@ export default function Home() {
                           </div>
                         </div>
                         
-                        {/* UPDATED SECTION: FLEX COL CENTER 
-                           Agar teks panjang tidak terpotong dan tidak turun berantakan
-                        */}
                         <div className="flex-1 min-w-0 w-full flex flex-col items-center justify-center">
                           <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="w-full flex flex-col items-center">
                             
@@ -1109,74 +1097,62 @@ export default function Home() {
                               {revealedAwardWinner.category}
                             </div>
                             
-                            {/* H1 MODIFIED: 
-                                - 'text-2xl' mobile start to prevent overflow
-                                - 'leading-tight' for better multi-line spacing
-                                - 'break-words' and 'px-2' ensures wrapping inside container
-                            */}
                             <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black text-white leading-tight mb-2 md:mb-3 bg-clip-text text-transparent bg-gradient-to-r from-white via-yellow-100 to-yellow-500 drop-shadow-lg break-words w-full px-2 hyphens-auto">
                               {revealedAwardWinner.name}
                             </h1>
     
-                            {/* DIVIDER */}
                             <div className="h-px w-full bg-gradient-to-r from-transparent via-yellow-500/50 to-transparent mb-8"></div>
 
-                            {awardStep < mergedAwardWinners.length ? (
-                              <button onClick={handleAwardReveal} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-white text-slate-900 rounded-full font-bold flex items-center justify-center gap-2 hover:bg-yellow-400 hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,255,255,0.3)] text-sm md:text-base">
-                                Lanjut: {mergedAwardWinners[awardStep].category} (Rank #{mergedAwardWinners[awardStep].rank}) <ChevronRight size={20} />
-                              </button>
-                            ) : (
-                              <button onClick={() => setRevealedAwardWinner(null)} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-green-500 text-white rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2 text-sm md:text-base">
-                                <PartyPopper size={20} /> SELESAI & REKAP
-                              </button>
-                            )}
+                            {/* LOGIC BUTTON: Check Category Transition */}
+                            {(() => {
+                                const isNextAvailable = awardStep < mergedAwardWinners.length;
+                                // Jika kategori berubah ATAU ini adalah pemenang terakhir (semua award selesai)
+                                const isCategoryFinished = (isNextAvailable && mergedAwardWinners[awardStep].category !== revealedAwardWinner.category) || !isNextAvailable;
+
+                                if (isCategoryFinished) {
+                                    // TOMBOL LIHAT PODIUM (Jika kategori berubah ATAU ini terakhir)
+                                    return (
+                                        <button 
+                                            onClick={() => {
+                                                setCategoryPodiumName(revealedAwardWinner.category);
+                                                setShowCategoryPodium(true);
+                                            }} 
+                                            className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-purple-600 text-white rounded-full font-bold flex items-center justify-center gap-2 hover:bg-purple-500 hover:scale-105 transition-all shadow-lg text-sm md:text-base animate-pulse"
+                                        >
+                                            <BarChart3 size={20} /> LIHAT PODIUM KATEGORI
+                                        </button>
+                                    );
+                                } else {
+                                    // TOMBOL LANJUT BIASA (Jika kategori masih sama dan belum habis)
+                                    return (
+                                        <button onClick={handleAwardReveal} className="w-full md:w-auto px-8 md:px-10 py-3 md:py-4 bg-white text-slate-900 rounded-full font-bold flex items-center justify-center gap-2 hover:bg-yellow-400 hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,255,255,0.3)] text-sm md:text-base">
+                                            Lanjut: {mergedAwardWinners[awardStep].category} (Rank #{mergedAwardWinners[awardStep].rank}) <ChevronRight size={20} />
+                                        </button>
+                                    );
+                                }
+                            })()}
                           </motion.div>
                         </div>
                       </div>
                     </motion.div>
                   </div>
                 )}
-
-                {/* 4. STATE: ALL COMPLETED - PODIUM */}
-                {!isAwardSpinning && !revealedAwardWinner && !pendingAward && awardStep >= mergedAwardWinners.length && (
+                
+                {/* 4. STATE: CATEGORY PODIUM (INTERMEDIATE) */}
+                {showCategoryPodium && categoryPodiumName && (
                   <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center w-full">
-                    <div className="bg-gradient-to-b from-purple-900/50 to-slate-900/80 backdrop-blur-xl border border-purple-500/30 rounded-[3rem] p-8 md:p-12 shadow-2xl text-center w-full max-w-4xl relative overflow-hidden mb-16">
-                        <div className="absolute inset-0 pointer-events-none z-0">
-                          {confettiParticles.map((p, i) => (
-                            <motion.div
-                              key={i}
-                              initial={{ y: -50, x: 0, opacity: 1, rotate: 0 }}
-                              animate={{ y: '100vh', x: p.sway, rotateX: p.rotation * 2, rotateY: p.rotation * 2, rotateZ: p.rotation }}
-                              transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
-                              className={`absolute ${p.color} will-change-transform`}
-                              style={{ left: `${p.x}%`, width: p.width, height: p.height }}
-                            />
-                          ))}
-                        </div>
-                        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
-                        <div className="relative z-10">
-                          <Crown className="w-16 h-16 md:w-20 md:h-20 mx-auto mb-4 text-yellow-400 drop-shadow-[0_0_20px_rgba(234,179,8,0.6)] animate-bounce" />
-                          <h2 className="text-3xl md:text-5xl font-black text-white mb-4">HALL OF FAME LENGKAP!</h2>
-                          <p className="text-slate-300 text-sm md:text-base mb-8 max-w-2xl mx-auto">Selamat kepada seluruh penerima penghargaan.</p>
-                          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                            <button onClick={triggerCelebration} className="px-8 py-3 bg-purple-600 text-white rounded-full font-bold text-lg shadow-lg hover:bg-purple-500 hover:scale-105 transition-transform flex items-center justify-center gap-2 relative z-20"><PartyPopper /> RAYAKAN</button>
-                          </div>
-                        </div>
-                    </div>
-
-                    {/* PODIUM RECAP */}
-                    <div className="w-full flex flex-col gap-20 pb-20">
-                      {Array.from(new Set(mergedAwardWinners.map(w => w.category))).map((categoryName) => {
-                          const categoryWinners = mergedAwardWinners.filter(w => w.category === categoryName);
-                          const rank1 = categoryWinners.find(w => w.rank === 1);
-                          const rank2 = categoryWinners.find(w => w.rank === 2);
-                          const rank3 = categoryWinners.find(w => w.rank === 3);
-                          const others = categoryWinners.filter(w => w.rank > 3);
-
-                          return (
-                             <div key={categoryName} className="flex flex-col items-center">
-                                <div className="inline-block px-6 py-2 bg-slate-800/80 rounded-full border border-white/10 text-xl font-bold text-white mb-8 shadow-lg backdrop-blur-sm">
-                                   {categoryName}
+                      <div className="w-full flex flex-col gap-10 pb-10">
+                        {/* Only Render Specific Category */}
+                        {(() => {
+                           const categoryWinners = mergedAwardWinners.filter(w => w.category === categoryPodiumName);
+                           const rank1 = categoryWinners.find(w => w.rank === 1);
+                           const rank2 = categoryWinners.find(w => w.rank === 2);
+                           const rank3 = categoryWinners.find(w => w.rank === 3);
+                           
+                           return (
+                             <div className="flex flex-col items-center">
+                                <div className="inline-block px-6 py-2 bg-gradient-to-r from-purple-900 to-slate-900 rounded-full border border-purple-500/50 text-xl md:text-2xl font-bold text-white mb-8 shadow-[0_0_30px_rgba(168,85,247,0.4)] backdrop-blur-sm uppercase tracking-widest">
+                                    PODIUM: {categoryPodiumName}
                                 </div>
                                  
                                 <div className="flex flex-wrap items-end justify-center gap-4 md:gap-8 min-h-[350px]">
@@ -1185,12 +1161,11 @@ export default function Home() {
                                       <div className="flex flex-col items-center order-2 md:order-1">
                                           <div className="text-center mb-3">
                                             <div className="text-white font-bold text-sm md:text-base">{rank2.name}</div>
-                                            {/* Company removed */}
                                           </div>
-                                          <div className="w-24 md:w-32 h-32 md:h-48 bg-gradient-to-t from-slate-700/80 to-slate-500/20 border-t border-x border-slate-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_30px_rgba(148,163,184,0.1)]">
+                                          <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} className="w-24 md:w-32 h-32 md:h-48 bg-gradient-to-t from-slate-700/80 to-slate-500/20 border-t border-x border-slate-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_30px_rgba(148,163,184,0.1)]">
                                             <div className="absolute top-0 left-0 right-0 h-1 bg-white/20"></div>
                                             <div className="text-4xl md:text-5xl font-black text-slate-300 opacity-50">2</div>
-                                          </div>
+                                          </motion.div>
                                           <div className="mt-4 w-12 h-12 md:w-16 md:h-16 rounded-full bg-slate-300 flex items-center justify-center text-slate-900 font-bold border-4 border-slate-700 shadow-lg z-10 -mt-10">
                                               <span className="text-xl">#2</span>
                                           </div>
@@ -1202,15 +1177,14 @@ export default function Home() {
                                       <div className="flex flex-col items-center order-1 md:order-2 z-10">
                                           <div className="text-center mb-16 relative z-20">
                                             <div className="text-yellow-300 font-bold text-lg md:text-xl drop-shadow-md">{rank1.name}</div>
-                                            {/* Company removed */}
                                           </div>
-                                          <div className="w-28 md:w-40 h-40 md:h-64 bg-gradient-to-t from-yellow-700/80 to-yellow-500/20 border-t border-x border-yellow-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_50px_rgba(234,179,8,0.3)]">
+                                          <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} className="w-28 md:w-40 h-40 md:h-64 bg-gradient-to-t from-yellow-700/80 to-yellow-500/20 border-t border-x border-yellow-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_50px_rgba(234,179,8,0.3)]">
                                             <div className="absolute top-0 left-0 right-0 h-1 bg-yellow-200/40"></div>
                                             <div className="absolute -top-10 animate-bounce">
                                                 <Crown className="text-yellow-400 fill-yellow-400/20" size={40} />
                                             </div>
                                             <div className="text-5xl md:text-7xl font-black text-yellow-500 opacity-50">1</div>
-                                          </div>
+                                          </motion.div>
                                           <div className="mt-4 w-16 h-16 md:w-20 md:h-20 rounded-full bg-yellow-400 flex items-center justify-center text-yellow-900 font-bold border-4 border-yellow-600 shadow-xl z-10 -mt-12 scale-110">
                                               <Trophy size={28} />
                                           </div>
@@ -1222,34 +1196,213 @@ export default function Home() {
                                       <div className="flex flex-col items-center order-3">
                                           <div className="text-center mb-3">
                                             <div className="text-white font-bold text-sm md:text-base">{rank3.name}</div>
-                                            {/* Company removed */}
                                           </div>
-                                          <div className="w-24 md:w-32 h-24 md:h-36 bg-gradient-to-t from-orange-800/80 to-orange-600/20 border-t border-x border-orange-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_30px_rgba(194,65,12,0.1)]">
+                                          <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} className="w-24 md:w-32 h-24 md:h-36 bg-gradient-to-t from-orange-800/80 to-orange-600/20 border-t border-x border-orange-500/50 rounded-t-xl relative flex items-end justify-center pb-4 backdrop-blur-md shadow-[0_0_30px_rgba(194,65,12,0.1)]">
                                             <div className="absolute top-0 left-0 right-0 h-1 bg-white/20"></div>
                                             <div className="text-4xl md:text-5xl font-black text-orange-400 opacity-50">3</div>
-                                          </div>
+                                          </motion.div>
                                           <div className="mt-4 w-12 h-12 md:w-16 md:h-16 rounded-full bg-orange-400 flex items-center justify-center text-orange-900 font-bold border-4 border-orange-700 shadow-lg z-10 -mt-10">
                                               <span className="text-xl">#3</span>
                                           </div>
                                       </div>
                                     )}
                                 </div>
-                                {others.length > 0 && (
-                                    <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl">
-                                        {others.map(other => (
-                                            <div key={other.id} className="bg-slate-800/40 border border-white/5 p-3 rounded-xl flex items-center gap-3">
-                                                <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">#{other.rank}</div>
-                                                <div>
-                                                    <div className="text-sm font-bold text-slate-200">{other.name}</div>
-                                                    {/* Company removed */}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
                              </div>
-                          )
-                      })}
+                            )
+                        })()}
+                        
+                        <div className="flex justify-center mt-10">
+                            <button 
+                                onClick={() => {
+                                    // PERBAIKAN DI SINI:
+                                    // Selalu reset revealedAwardWinner agar tampilan tidak loop ke pemenang sebelumnya
+                                    setShowCategoryPodium(false);
+                                    setCategoryPodiumName(null);
+                                    setRevealedAwardWinner(null); 
+                                }} 
+                                className="px-8 py-4 bg-white text-slate-900 rounded-full font-bold flex items-center gap-2 hover:bg-slate-200 shadow-lg transition-transform hover:scale-105"
+                            >
+                                {awardStep >= mergedAwardWinners.length ? (
+                                  <> <PartyPopper size={20} /> SELESAI & REKAP </>
+                                ) : (
+                                  <> LANJUT KE KATEGORI BERIKUTNYA <ArrowLeft className="rotate-180" size={20} /> </>
+                                )}
+                            </button>
+                        </div>
+                      </div>
+                  </motion.div>
+                )}
+
+                {/* 5. STATE: ALL COMPLETED - GLOBAL PODIUM (CAROUSEL MODE) */}
+                {!isAwardSpinning && !revealedAwardWinner && !pendingAward && !showCategoryPodium && awardStep >= mergedAwardWinners.length && (
+                  <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center w-full min-h-[70vh] justify-center relative">
+                    
+                    {/* Confetti Background for Celebration */}
+                    <div className="absolute inset-0 pointer-events-none z-[60]">
+                        {confettiParticles.map((p, i) => (
+                        <motion.div
+                            key={i}
+                            initial={{ y: -50, x: 0, opacity: 1, rotate: 0 }}
+                            animate={{ y: '100vh', x: p.sway, rotateX: p.rotation * 2, rotateY: p.rotation * 2, rotateZ: p.rotation }}
+                            transition={{ duration: p.duration, delay: p.delay, ease: "linear" }}
+                            className={`absolute ${p.color} will-change-transform`}
+                            style={{ left: `${p.x}%`, width: p.width, height: p.height }}
+                        />
+                        ))}
+                    </div>
+
+                    {/* CAROUSEL CONTAINER - FULL WIDTH */}
+                    <div 
+                      className="w-full max-w-[1600px] mx-auto flex items-center justify-between px-2 md:px-10 mt-8 relative z-20"
+                      onMouseEnter={() => setIsCarouselPaused(true)}
+                      onMouseLeave={() => setIsCarouselPaused(false)}
+                    >
+                      {/* Nav Button Left */}
+                      <button 
+                         onClick={() => setCarouselIndex(prev => (prev - 1 + uniqueCategories.length) % uniqueCategories.length)}
+                         className="p-4 bg-slate-800/50 hover:bg-slate-700/80 rounded-full text-white/50 hover:text-white transition-all backdrop-blur-sm z-30"
+                      >
+                          <ChevronLeft size={32} />
+                      </button>
+
+                      {/* Content Area */}
+                      <div className="flex-1 flex justify-center items-center min-h-[60vh] px-4">
+                        <AnimatePresence mode="wait">
+                            {uniqueCategories.map((categoryName, index) => {
+                              if (index !== carouselIndex) return null;
+
+                              const categoryWinners = mergedAwardWinners.filter(w => w.category === categoryName);
+                              const rank1 = categoryWinners.find(w => w.rank === 1);
+                              const rank2 = categoryWinners.find(w => w.rank === 2);
+                              const rank3 = categoryWinners.find(w => w.rank === 3);
+                              const others = categoryWinners.filter(w => w.rank > 3);
+
+                              return (
+                                <motion.div
+                                  key={categoryName}
+                                  initial={{ opacity: 0, x: 100 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  exit={{ opacity: 0, x: -100 }}
+                                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                                  className="flex flex-col items-center w-full max-w-6xl bg-slate-900/40 border border-white/5 rounded-[3rem] p-6 md:p-12 shadow-2xl backdrop-blur-md"
+                                >
+                                  <div className="inline-block px-8 py-2 bg-slate-800/80 rounded-full border border-white/10 text-xl md:text-3xl font-bold text-white mb-10 shadow-lg backdrop-blur-sm text-center tracking-widest uppercase">
+                                    {categoryName}
+                                  </div>
+
+                                  <div className="flex items-end justify-center gap-4 md:gap-8 w-full h-full min-h-[400px]">
+                                    {/* RANK 2 */}
+                                    {rank2 && (
+                                      <div className="flex flex-col items-center order-2 w-1/3 max-w-[250px]">
+                                        <div className="text-center mb-4 w-full px-1">
+                                          <div className="text-white font-bold text-sm md:text-lg leading-tight line-clamp-2 min-h-[2.5em] flex items-end justify-center w-full">
+                                            {rank2.name}
+                                          </div>
+                                        </div>
+                                        <div className="w-full h-32 md:h-48 bg-gradient-to-t from-slate-700/80 to-slate-500/20 border-t border-x border-slate-500/50 rounded-t-2xl relative flex items-end justify-center pb-4">
+                                          <div className="text-5xl font-black text-slate-300 opacity-50">2</div>
+                                        </div>
+                                        <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-slate-300 flex items-center justify-center text-slate-900 font-bold border-4 border-slate-700 shadow-lg z-10 -mt-5 md:-mt-6 text-base md:text-lg">
+                                          #2
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* RANK 1 - MODIFIED FOR BETTER LAYOUT */}
+                                    {rank1 && (
+                                      <div className="flex flex-col items-center order-1 w-1/3 max-w-[300px] z-10 relative">
+                                        {/* NAMA JUARA 1 */}
+                                        {/* mb-16 memberikan ruang agar teks tidak menabrak mahkota */}
+                                        <div className="text-center mb-16 relative z-20 w-full">
+                                          {/* Font size disesuaikan agar tidak pecah vertikal terlalu parah */}
+                                          <div className="text-yellow-300 w-full">
+                                              <AutoFitText text={rank1.name} />
+                                          </div>
+                                        </div>
+
+                                        {/* PODIUM JUARA 1 */}
+                                        <div className="w-full h-48 md:h-80 bg-gradient-to-t from-yellow-700/80 to-yellow-500/20 border-t border-x border-yellow-500/50 rounded-t-2xl relative flex items-end justify-center pb-4 shadow-[0_0_50px_rgba(234,179,8,0.3)]">
+                                          {/* MAHKOTA - Posisi absolute ke atas podium */}
+                                          <div className="absolute -top-12 left-1/2 -translate-x-1/2 animate-bounce z-30">
+                                            <Crown className="text-yellow-400 fill-yellow-400/20 drop-shadow-lg" size={56} />
+                                          </div>
+                                          <div className="text-7xl md:text-8xl font-black text-yellow-500 opacity-50">1</div>
+                                        </div>
+                                        
+                                        <div className="w-14 h-14 md:w-20 md:h-20 rounded-full bg-yellow-400 flex items-center justify-center text-yellow-900 font-bold border-4 border-yellow-600 shadow-xl z-10 -mt-7 md:-mt-10 scale-110">
+                                          <Trophy size={32} />
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* RANK 3 */}
+                                    {rank3 && (
+                                      <div className="flex flex-col items-center order-3 w-1/3 max-w-[250px]">
+                                        <div className="text-center mb-4 w-full px-1">
+                                          <div className="text-white w-full">
+                                            <AutoFitText text={rank3.name}/>
+
+                                          </div>
+                                        </div>
+                                        <div className="w-full h-24 md:h-36 bg-gradient-to-t from-orange-800/80 to-orange-600/20 border-t border-x border-orange-500/50 rounded-t-2xl relative flex items-end justify-center pb-4">
+                                          <div className="text-5xl font-black text-orange-400 opacity-50">3</div>
+                                        </div>
+                                        <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-orange-400 flex items-center justify-center text-orange-900 font-bold border-4 border-orange-700 shadow-lg z-10 -mt-5 md:-mt-6 text-base md:text-lg">
+                                          #3
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* WINNERS LIST (RANK 4+) */}
+                                  {others.length > 0 && (
+                                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-4xl">
+                                      {others.map(other => (
+                                        <div key={other.id} className="bg-slate-800/40 border border-white/5 p-3 rounded-xl flex items-center gap-3">
+                                          <div className="w-8 h-8 min-w-[2rem] rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">#{other.rank}</div>
+                                          <div className="text-sm font-bold text-slate-200 truncate">{other.name}</div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </motion.div>
+                              );
+                            })}
+                          </AnimatePresence>
+                      </div>
+
+                      {/* Nav Button Right */}
+                      <button 
+                         onClick={() => setCarouselIndex(prev => (prev + 1) % uniqueCategories.length)}
+                         className="p-4 bg-slate-800/50 hover:bg-slate-700/80 rounded-full text-white/50 hover:text-white transition-all backdrop-blur-sm z-30"
+                      >
+                          <ChevronRight size={32} />
+                      </button>
+                    </div>
+
+                    {/* Controls & Indicators */}
+                    <div className="flex items-center gap-4 mt-6">
+                        <button onClick={() => setIsCarouselPaused(prev => !prev)} className="text-slate-400 hover:text-white">
+                            {isCarouselPaused ? <PlayCircle size={24} /> : <PauseCircle size={24} />}
+                        </button>
+                        <div className="flex gap-2">
+                            {uniqueCategories.map((_, idx) => (
+                                <div 
+                                    key={idx} 
+                                    className={`h-2 rounded-full transition-all duration-300 ${idx === carouselIndex ? 'w-8 bg-yellow-500' : 'w-2 bg-slate-700'}`}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                    
+                    {/* Tombol Confetti - SEJAJAR DENGAN ICON SOUND */}
+                    <div className="fixed bottom-4 right-16 md:bottom-6 md:right-20 z-[100]">
+                        <button 
+                          onClick={triggerCelebration} 
+                          className="w-10 h-10 md:w-12 md:h-12 bg-slate-800/80 backdrop-blur-md border border-white/10 rounded-full flex items-center justify-center text-white hover:bg-slate-700 hover:scale-110 transition-all shadow-lg group"
+                        >
+                            <PartyPopper size={18} className="md:w-5 md:h-5 text-purple-400" />
+                        </button>
                     </div>
                   </motion.div>
                 )}
@@ -1551,3 +1704,56 @@ function TimeDependentButton({ targetDate, onClick, disabled, text, icon, theme 
     </button>
   )
 }
+
+// 3. Auto Fit Text Component (Dipindahkan ke luar JSX)
+interface AutoFitTextProps {
+  text: string;
+}
+
+const AutoFitText: React.FC<AutoFitTextProps> = ({ text }) => {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState<"lg" | "md" | "sm" | "xs">("lg");
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const fits = () => el.scrollWidth <= el.clientWidth;
+
+    let nextSize: "lg" | "md" | "sm" | "xs" = "lg";
+
+    // paksa mulai dari terbesar
+    el.className = el.className.replace(/text-\S+/g, "");
+
+    if (!fits()) nextSize = "md";
+    if (!fits()) nextSize = "sm";
+    if (!fits()) nextSize = "xs";
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSize(nextSize);
+  }, [text]);
+
+  const sizeClass = {
+    lg: "text-sm md:text-base lg:text-lg",
+    md: "text-xs md:text-sm",
+    sm: "text-[13px] md:text-xs",
+    xs: "text-[10px] md:text-[13px]",
+  }[size];
+
+  return (
+    <div
+      ref={ref}
+      className={`
+        w-full text-center font-semibold
+        drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]
+        leading-tight
+        whitespace-nowrap
+        overflow-hidden
+        ${sizeClass}
+      `}
+      title={text}
+    >
+      {text}
+    </div>
+  );
+};

@@ -1,3 +1,4 @@
+// app/actions/spreadsheetAction.ts
 "use server";
 
 import { google } from "googleapis";
@@ -26,7 +27,8 @@ export async function getSpreadsheetData() {
       return { success: false, message: "Variable SPREADSHEET_IDS belum diset atau kosong." };
     }
 
-    let allRawRows: any[] = [];
+    // PERBAIKAN DI SINI: Menggunakan 'const' dan tipe spesifik 'string[][]'
+    const allRawRows: string[][] = [];
 
     // 3. LOOPING UNTUK MENGAMBIL DATA DARI SETIAP ID
     // Kita gunakan Promise.all agar pengambilan data berjalan paralel (lebih cepat)
@@ -53,7 +55,8 @@ export async function getSpreadsheetData() {
           if (rows && rows.length > 1) {
             // rows.slice(1) untuk membuang header di setiap sheet
             const cleanRows = rows.slice(1);
-            allRawRows.push(...cleanRows);
+            // Casting ke string[][] agar sesuai dengan definisi tipe allRawRows
+            allRawRows.push(...(cleanRows as string[][]));
           }
         } catch (err) {
           console.error(`Gagal mengambil data dari ID: ${id}`, err);

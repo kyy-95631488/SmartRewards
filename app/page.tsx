@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // app/page.tsx
 "use client";
 
@@ -5,7 +6,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Gift, ArrowLeft, Medal, Zap, List, X, Sparkles, Lock, Save, RotateCcw,
-  Volume2, VolumeX, Crown
+  Volume2, VolumeX, Crown, Ticket
 } from "lucide-react";
 
 // --- FIREBASE IMPORTS ---
@@ -24,6 +25,7 @@ import DoorprizeFeature from "./components/landing/DoorprizeFeature";
 export interface Participant {
   id: string;
   name: string;
+  lotteryNumber: string; // MODIFIKASI: Menambahkan field lotteryNumber
 }
 
 export interface Prize {
@@ -42,6 +44,7 @@ export interface WinnerLog {
   prizeImage: string;
   timestamp: Timestamp | null;
   displayTime?: string;
+  lotteryNumber?: string; // MODIFIKASI: Menambahkan field di log
 }
 
 interface AwardNominee {
@@ -173,7 +176,8 @@ export default function Home() {
   const [pendingDoorprize, setPendingDoorprize] = useState<{ winner: Participant; prize: Prize } | null>(null);
     
   // Award States
-  const [winner, setWinner] = useState<{ name: string; prize: Prize } | null>(null);
+  // MODIFIKASI: Menambahkan lotteryNumber ke state winner
+  const [winner, setWinner] = useState<{ name: string; lotteryNumber: string; prize: Prize } | null>(null);
     
   const [awardStep, setAwardStep] = useState(0);
   const [confettiParticles, setConfettiParticles] = useState<Particle[]>([]);
@@ -202,22 +206,25 @@ export default function Home() {
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null);
   const countdownAudioRef = useRef<HTMLAudioElement | null>(null);
   const suspenseAudioRef = useRef<HTMLAudioElement | null>(null);
-  
+  const drumrollAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fanfareAudioRef = useRef<HTMLAudioElement | null>(null);
+    
   const bgmFadeInterval = useRef<NodeJS.Timeout | null>(null);
+  const awardSoundTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isMuted, setIsMuted] = useState(false);
   const isMutedRef = useRef(false);
-  
+    
   const [isAwardSoundPlaying, setIsAwardSoundPlaying] = useState(false);
 
   // --- INITIALIZE VISUALS & AUDIO ---
   useEffect(() => {
     if (typeof window !== "undefined") {
-      if (!spinAudioRef.current) {
-        spinAudioRef.current = new Audio("/sounds/drumroll.mp3");
-        spinAudioRef.current.loop = true;
-        spinAudioRef.current.volume = 0.8;
-      }
+      // if (!spinAudioRef.current) {
+      //   spinAudioRef.current = new Audio("/sounds/slot-machine.mp3");
+      //   spinAudioRef.current.loop = true;
+      //   spinAudioRef.current.volume = 0.8;
+      // }
       if (!clapAudioRef.current) {
         clapAudioRef.current = new Audio("/sounds/applause.mp3");
         clapAudioRef.current.volume = 0.8;
@@ -228,16 +235,28 @@ export default function Home() {
       }
       if (!bgmAudioRef.current) {
         bgmAudioRef.current = new Audio("/sounds/backsound.mp3");
-        bgmAudioRef.current.loop = true;
+        bgmAudioRef.current.loop = true; 
         bgmAudioRef.current.volume = 0.4;
       }
       if (!countdownAudioRef.current) {
         countdownAudioRef.current = new Audio("/sounds/countdown.mp3");
-        countdownAudioRef.current.volume = 0.5;
+        countdownAudioRef.current.volume = 0.6;
       }
       if (!suspenseAudioRef.current) {
         suspenseAudioRef.current = new Audio("/sounds/suspense.mp3");
-        suspenseAudioRef.current.volume = 0.7;
+        suspenseAudioRef.current.volume = 0.8;
+      }
+      if (!drumrollAudioRef.current) {
+         drumrollAudioRef.current = new Audio("/sounds/drumroll.mp3");
+         drumrollAudioRef.current.loop = true;
+         drumrollAudioRef.current.volume = 0.8;
+      }
+      if (!fanfareAudioRef.current) {
+         fanfareAudioRef.current = new Audio("/sounds/brass-fanfare-reverberated-edit.mp3");
+         fanfareAudioRef.current.volume = 0.8;
+         fanfareAudioRef.current.onended = () => {
+             setIsAwardSoundPlaying(false);
+         };
       }
     }
 
@@ -254,7 +273,7 @@ export default function Home() {
       window.removeEventListener('click', startAudioOnInteraction);
       window.removeEventListener('keydown', startAudioOnInteraction);
         
-      [spinAudioRef, clapAudioRef, winAudioRef, bgmAudioRef, countdownAudioRef, suspenseAudioRef].forEach(ref => {
+      [spinAudioRef, clapAudioRef, winAudioRef, bgmAudioRef, countdownAudioRef, suspenseAudioRef, drumrollAudioRef, fanfareAudioRef].forEach(ref => {
         if (ref.current) {
           ref.current.pause();
           ref.current.currentTime = 0;
@@ -264,7 +283,7 @@ export default function Home() {
   }, []);
 
   const stopAllSounds = () => {
-    [spinAudioRef, clapAudioRef, winAudioRef, bgmAudioRef, countdownAudioRef, suspenseAudioRef].forEach(ref => {
+    [spinAudioRef, clapAudioRef, winAudioRef, countdownAudioRef, suspenseAudioRef, drumrollAudioRef, fanfareAudioRef].forEach(ref => {
         if (ref.current) {
             ref.current.pause();
             ref.current.currentTime = 0;
@@ -289,32 +308,47 @@ export default function Home() {
     }
   };
 
-  const handleAwardPlaySound = (type: 'countdown' | 'suspense') => {
+  // --- HANDLE AUDIO AWARDS ---
+  const handleAwardPlaySound = (type: 'countdown' | 'suspense' | 'drumroll' | 'fanfare') => {
     if (isMutedRef.current) return;
 
+    if (awardSoundTimeoutRef.current) clearTimeout(awardSoundTimeoutRef.current);
+    setIsAwardSoundPlaying(true);
+
     if (type === 'countdown') {
-        setIsAwardSoundPlaying(true);
-        smartPlay(countdownAudioRef);
-        setTimeout(() => {
-           setIsAwardSoundPlaying(false);
-        }, 800);
-    } else if (type === 'suspense') {
-        setIsAwardSoundPlaying(true);
-        smartPlay(suspenseAudioRef);
-        setTimeout(() => {
-            setIsAwardSoundPlaying(false);
-        }, 3000);
+        smartStop(suspenseAudioRef);
+        smartStop(drumrollAudioRef);
+        smartStop(fanfareAudioRef);
+        smartPlay(countdownAudioRef); 
+        awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 3500); 
+    } 
+    else if (type === 'suspense') {
+        smartStop(countdownAudioRef);
+        smartStop(drumrollAudioRef);
+        smartStop(fanfareAudioRef);
+        smartPlay(suspenseAudioRef); 
+        awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 2500);
+    } 
+    else if (type === 'drumroll') {
+        smartStop(countdownAudioRef);
+        smartStop(suspenseAudioRef);
+        smartStop(fanfareAudioRef);
+        smartPlay(drumrollAudioRef);
+    } 
+    else if (type === 'fanfare') {
+        smartStop(countdownAudioRef);
+        smartStop(suspenseAudioRef);
+        smartStop(drumrollAudioRef);
+        smartPlay(fanfareAudioRef);
+        awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 4500);
     }
   };
 
-  const handleStopAwardSound = (type: 'countdown' | 'suspense') => {
-    if (type === 'countdown') {
-        smartStop(countdownAudioRef);
-        setIsAwardSoundPlaying(false); 
-    }
-    if (type === 'suspense') {
-        smartStop(suspenseAudioRef);
-    }
+  const handleStopAwardSound = (type: 'countdown' | 'suspense' | 'drumroll' | 'fanfare') => {
+    if (type === 'countdown') smartStop(countdownAudioRef);
+    if (type === 'suspense') smartStop(suspenseAudioRef);
+    if (type === 'drumroll') smartStop(drumrollAudioRef);
+    if (type === 'fanfare') smartStop(fanfareAudioRef);
   };
 
   const toggleMute = () => {
@@ -324,6 +358,7 @@ export default function Home() {
 
         if (newState) {
             stopAllSounds();
+            if(bgmAudioRef.current) bgmAudioRef.current.pause();
         } else {
             if (bgmAudioRef.current) {
                 bgmAudioRef.current.volume = 0.4;
@@ -334,29 +369,30 @@ export default function Home() {
     });
   };
 
+  // --- BGM FADE LOGIC ---
   useEffect(() => {
     const isEffectPlaying = isSpinning || isAwardSoundPlaying;
-    const targetVolume = isEffectPlaying ? 0.05 : 0.4;
+    const targetVolume = isEffectPlaying ? 0.15 : 0.4; 
 
     if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
     if (isMuted) return;
 
     if (bgmAudioRef.current) {
         if (bgmAudioRef.current.paused && !isMuted) {
-            bgmAudioRef.current.play().catch(() => {});
+              bgmAudioRef.current.play().catch(() => {});
         }
 
         bgmFadeInterval.current = setInterval(() => {
             if (!bgmAudioRef.current) return;
             const currentVol = bgmAudioRef.current.volume;
               
-            if (Math.abs(currentVol - targetVolume) < 0.02) {
+            if (Math.abs(currentVol - targetVolume) < 0.01) {
                 bgmAudioRef.current.volume = targetVolume;
-                if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
+                if(bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
             } else if (currentVol > targetVolume) {
-                bgmAudioRef.current.volume = Math.max(0, currentVol - 0.05);
+                bgmAudioRef.current.volume = Math.max(0, currentVol - 0.08); 
             } else {
-                bgmAudioRef.current.volume = Math.min(1, currentVol + 0.02);
+                bgmAudioRef.current.volume = Math.min(0.4, currentVol + 0.05); 
             }
         }, 50);
     }
@@ -374,11 +410,7 @@ export default function Home() {
     setShowFlash(false);
     if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
 
-    smartStop(spinAudioRef);
-    smartStop(clapAudioRef);
-    smartStop(winAudioRef);
-    smartStop(countdownAudioRef);
-    smartStop(suspenseAudioRef);
+    stopAllSounds();
     setIsAwardSoundPlaying(false);
   };
 
@@ -402,6 +434,13 @@ export default function Home() {
     setConfettiParticles([]);
     smartStop(clapAudioRef);
     smartPlay(winAudioRef);
+    setIsAwardSoundPlaying(true);
+
+    if (awardSoundTimeoutRef.current) clearTimeout(awardSoundTimeoutRef.current);
+    awardSoundTimeoutRef.current = setTimeout(() => {
+        setIsAwardSoundPlaying(false);
+    }, 3500);
+
     setTimeout(() => {
       setConfettiParticles(generateConfetti(200));
     }, 50);
@@ -648,10 +687,11 @@ export default function Home() {
   };
 
   // --- LOGIKA DOORPRIZE UTAMA ---
-  const handleDoorprizeSpin = async () => {
+  const handleDoorprizeSpin = async (targetPrizeId?: string | null) => {
     // 1. Ambil semua yang stok > 0
     const availablePrizes = prizes.filter(p => p.stock > 0);
     const previousWinnerNames = doorprizeLog.map(log => log.name);
+    // LOGIC: Filter peserta yang belum menang
     const eligibleParticipants = participants.filter(p => !previousWinnerNames.includes(p.name));
 
     if (isSpinning || availablePrizes.length === 0 || eligibleParticipants.length === 0) {
@@ -661,47 +701,62 @@ export default function Home() {
       return;
     }
 
-    // 2. LOGIKA GRAND PRIZE GUARD
-    const regularPrizes = availablePrizes.filter(p => !p.isGrandPrize);
-    const grandPrizes = availablePrizes.filter(p => p.isGrandPrize);
+    // --- VARIABEL UNTUK HADIAH TERPILIH ---
+    let selectedPrize: Prize | null = null;
 
-    // Jika masih ada hadiah regular, PAKSA ambil dari regular dulu
-    let targetPool: Prize[] = [];
+    // A. JIKA MC MEMILIH HADIAH SECARA MANUAL
+    if (targetPrizeId) {
+        selectedPrize = availablePrizes.find(p => p.id === targetPrizeId) || null;
+        if (!selectedPrize) {
+            alert("Stok hadiah yang dipilih sudah habis!");
+            return;
+        }
+    } 
+    // B. JIKA TIDAK ADA PILIHAN (AUTO RANDOM)
+    else {
+        // Logika Auto (Regular vs Grand Prize Guard)
+        const regularPrizes = availablePrizes.filter(p => !p.isGrandPrize);
+        const grandPrizes = availablePrizes.filter(p => p.isGrandPrize);
+        let targetPool: Prize[] = [];
 
-    if (regularPrizes.length > 0) {
-        targetPool = regularPrizes;
-    } else {
-        // Jika regular habis, baru boleh ambil Grand Prize
-        targetPool = grandPrizes;
+        if (regularPrizes.length > 0) {
+            targetPool = regularPrizes;
+        } else {
+            targetPool = grandPrizes;
+        }
+
+        if (targetPool.length === 0) {
+            alert("Terjadi kesalahan alokasi hadiah.");
+            return;
+        }
+
+        selectedPrize = getWeightedPrize(targetPool);
     }
 
-    if (targetPool.length === 0) {
-        alert("Terjadi kesalahan alokasi hadiah.");
-        return;
-    }
-
+    // --- PROSES SPINNING ---
     setIsSpinning(true);
     setWinner(null);
     setPendingDoorprize(null);
     setConfettiParticles([]);
-    smartPlay(spinAudioRef);
+    // MODIFIKASI: Gunakan Drumroll saat mengacak
+    smartPlay(drumrollAudioRef);
 
     spinIntervalRef.current = setInterval(() => {
       const randomIndex = Math.floor(Math.random() * participants.length);
-      setRollingName(participants[randomIndex].name);
+      const p = participants[randomIndex];
+      // MODIFIKASI: Menampilkan nomor undian saat spinning (rolling)
+      setRollingName(`${p.lotteryNumber ? `[${p.lotteryNumber}] ` : ''}${p.name}`);
     }, 50);
 
     setTimeout(async () => {
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
-      smartStop(spinAudioRef);
+      // MODIFIKASI: Stop Drumroll
+      smartStop(drumrollAudioRef);
       smartPlay(clapAudioRef);
 
       const randomWinnerIndex = getSecureRandomInt(eligibleParticipants.length);
       const finalWinner = eligibleParticipants[randomWinnerIndex];
-
-      // 3. PILIH HADIAH DARI TARGET POOL
-      const selectedPrize = getWeightedPrize(targetPool);
-        
+       
       if(!finalWinner || !selectedPrize) {
           alert("Terjadi kesalahan kalkulasi. Silakan coba lagi.");
           setIsSpinning(false);
@@ -710,7 +765,8 @@ export default function Home() {
       }
 
       triggerFlashEffect();
-      setRollingName(finalWinner.name);
+      // MODIFIKASI: Set nama akhir dengan format Nomor
+      setRollingName(`${finalWinner.lotteryNumber ? `[${finalWinner.lotteryNumber}] ` : ''}${finalWinner.name}`);
       setIsSpinning(false);
       setPendingDoorprize({ winner: finalWinner, prize: selectedPrize });
     }, 4000);
@@ -719,18 +775,26 @@ export default function Home() {
   const confirmDoorprizeWinner = async () => {
     if (!pendingDoorprize) return;
     const { winner: winParticipant, prize } = pendingDoorprize;
-    
+      
     smartPlay(winAudioRef);
     triggerFlashEffect();
 
-    setWinner({ name: winParticipant.name, prize: prize });
+    // MODIFIKASI: Sertakan lotteryNumber ke state winner
+    setWinner({ 
+        name: winParticipant.name, 
+        lotteryNumber: winParticipant.lotteryNumber, 
+        prize: prize 
+    });
     setConfettiParticles(generateConfetti(200));
 
     try {
       const prizeRef = doc(db, "prizes", prize.id);
       await updateDoc(prizeRef, { stock: prize.stock - 1 });
+      
+      // MODIFIKASI: Simpan juga lotteryNumber ke database log history
       await addDoc(collection(db, "doorprize_winners"), {
         name: winParticipant.name,
+        lotteryNumber: winParticipant.lotteryNumber || "", 
         prizeName: prize.name,
         prizeImage: prize.image_url || "",
         timestamp: serverTimestamp()
@@ -766,7 +830,6 @@ export default function Home() {
   }
 
   return (
-    // FIX: main wrapper menggunakan h-screen, flex-col, dan overflow-hidden agar child bisa 100% height
     <main className="h-screen w-full relative flex flex-col items-center py-2 md:py-4 overflow-hidden font-sans text-slate-100 bg-slate-950 selection:bg-blue-500 selection:text-white">
 
       {/* --- FLASH EFFECT --- */}
@@ -782,7 +845,7 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* --- BACKGROUND SYSTEM (Tidak berubah) --- */}
+      {/* --- BACKGROUND SYSTEM --- */}
       <div className="fixed inset-0 pointer-events-none z-0 transform-gpu">
         <div className="absolute inset-0 bg-slate-950"></div>
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-5 mix-blend-overlay"></div>
@@ -854,17 +917,14 @@ export default function Home() {
       <AnimatePresence>
         {pendingDoorprize && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-hidden">
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
+                  className={`w-[150vw] h-[150vw] md:w-[800px] md:h-[800px] ${pendingDoorprize.prize.isGrandPrize ? 'bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.3)_180deg,transparent_360deg)]' : 'bg-[conic-gradient(from_0deg,transparent_0deg,rgba(6,182,212,0.2)_180deg,transparent_360deg)]'} rounded-full blur-3xl opacity-50 transform-gpu will-change-transform`}
+                />
+            </div>
             
-            {/* GOD RAYS BACKDROP */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
-                  <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-                    className={`w-[150vw] h-[150vw] md:w-[800px] md:h-[800px] ${pendingDoorprize.prize.isGrandPrize ? 'bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.3)_180deg,transparent_360deg)]' : 'bg-[conic-gradient(from_0deg,transparent_0deg,rgba(6,182,212,0.2)_180deg,transparent_360deg)]'} rounded-full blur-3xl opacity-50 transform-gpu will-change-transform`}
-                  />
-              </div>
-            
-            {/* MODAL CONTAINER */}
             <motion.div 
               initial={{ scale: 0.5, y: 100 }} 
               animate={{ scale: 1, y: 0 }} 
@@ -876,9 +936,15 @@ export default function Home() {
                     {pendingDoorprize.prize.isGrandPrize ? "KONFIRMASI GRAND PRIZE" : "KONFIRMASI HASIL"}
                 </div>
 
-                {/* --- DOORPRIZE CONFIRMATION --- */}
                 {pendingDoorprize && (
                   <div className="flex flex-col items-center justify-center w-full">
+                    {/* MODIFIKASI: Menampilkan Nomor Undian di Modal Konfirmasi */}
+                    {pendingDoorprize.winner.lotteryNumber && (
+                        <div className={`mb-2 px-3 py-1 rounded border ${pendingDoorprize.prize.isGrandPrize ? 'bg-yellow-900/40 border-yellow-500/30 text-yellow-200' : 'bg-cyan-900/40 border-cyan-500/30 text-cyan-200'} font-mono text-sm font-bold flex items-center gap-2`}>
+                            <Ticket size={14} /> #{pendingDoorprize.winner.lotteryNumber}
+                        </div>
+                    )}
+
                     <h2 className="text-2xl md:text-4xl font-black text-white mb-2 drop-shadow-md break-words w-full leading-tight text-center px-2">
                         {pendingDoorprize.winner.name}
                     </h2>
@@ -893,7 +959,7 @@ export default function Home() {
                                 <Gift className="text-slate-600" size={60} />
                             )}
                         </div>
-                        
+                          
                         <div className="text-center md:text-left flex flex-col items-center md:items-start">
                            <p className="text-slate-400 text-xs md:text-sm mb-1 uppercase tracking-wider">Mendapatkan Hadiah:</p>
                            <h3 className={`text-lg md:text-3xl font-bold ${pendingDoorprize.prize.isGrandPrize ? 'text-yellow-400' : 'text-cyan-400'} leading-tight`}>
@@ -901,7 +967,7 @@ export default function Home() {
                            </h3>
                            {pendingDoorprize.prize.isGrandPrize && (
                                <div className="mt-2 inline-flex items-center gap-1 bg-yellow-500/20 text-yellow-300 text-[10px] px-2 py-1 rounded font-bold border border-yellow-500/30">
-                                   <Crown size={12}/> HADIAH UTAMA
+                                    <Crown size={12}/> HADIAH UTAMA
                                </div>
                            )}
                         </div>
@@ -937,6 +1003,8 @@ export default function Home() {
                     <thead>
                         <tr className="text-xs text-slate-400 uppercase tracking-wider border-b border-white/10">
                         <th className="py-4 px-2 md:px-4 font-semibold w-12 md:w-16">No</th>
+                        {/* MODIFIKASI: Tambah kolom nomor undian */}
+                        <th className="py-4 px-2 md:px-4 font-semibold w-24">No. Undian</th>
                         <th className="py-4 px-2 md:px-4 font-semibold">Nama Kandidat</th>
                         </tr>
                     </thead>
@@ -944,11 +1012,15 @@ export default function Home() {
                         {modalData.map((p, i) => (
                         <tr key={p.id} className="hover:bg-white/5 border-b border-white/5 last:border-0 transition-colors group">
                             <td className="py-3 px-2 md:px-4 text-slate-500 font-mono group-hover:text-blue-400 transition-colors">{i + 1}</td>
+                            <td className="py-3 px-2 md:px-4 text-cyan-400 font-mono font-bold">
+                                {/* @ts-expect-error accessing dynamic property */}
+                                {p.lotteryNumber || "-"}
+                            </td>
                             <td className="py-3 px-2 md:px-4 font-medium text-slate-200 group-hover:text-white">{p.name}</td>
                         </tr>
                         ))}
                         {modalData.length === 0 && (
-                        <tr><td colSpan={2} className="text-center py-12 text-slate-500">Database Kosong</td></tr>
+                        <tr><td colSpan={3} className="text-center py-12 text-slate-500">Database Kosong</td></tr>
                         )}
                     </tbody>
                     </table>
@@ -959,7 +1031,6 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* FIX: Container konten utama diberikan h-full dan flex flex-col flex-1 */}
       <div className="w-full max-w-[1400px] px-4 md:px-8 z-10 relative flex flex-col flex-1 h-full min-h-0">
 
         {/* --- NAVIGATION --- */}
@@ -977,16 +1048,8 @@ export default function Home() {
               </motion.button>
             )}
           </div>
-          <div className="flex gap-3 w-full md:w-auto justify-end">
-            {view !== "menu" && (
-              <button
-                onClick={() => setShowParticipantModal(true)}
-                className="flex items-center justify-center gap-2 px-4 py-2 md:px-5 md:py-2 rounded-full bg-slate-800/50 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-all backdrop-blur-sm font-medium text-sm w-full md:w-auto"
-              >
-                <List size={18} /> <span>Database ({modalData.length})</span>
-              </button>
-            )}
-          </div>
+          
+          <div id="header-actions" className="flex gap-3 w-full md:w-auto justify-end"></div>
         </div>
 
         <AnimatePresence mode="wait">
@@ -998,7 +1061,7 @@ export default function Home() {
               <div className="text-center relative px-2">
                 <div className="absolute -inset-10 bg-blue-500/20 blur-3xl rounded-full transform-gpu"></div>
                 <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="relative">
-                  <h1 className="text-4xl sm:text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-200 to-slate-400 drop-shadow-[0_0_30px_rgba(255,255,255,0.3)] tracking-tighter">GATHERING 2025</h1>
+                  <h1 className="text-4xl sm:text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-200 to-slate-400 drop-shadow-[0_0_30px_rgba(255,255,255,0.3)] tracking-tighter">GATHERING 2026</h1>
                   <div className="flex items-center justify-center gap-4 mt-4">
                     <div className="h-px w-8 md:w-12 bg-blue-500/50"></div>
                     <p className="text-sm sm:text-lg md:text-2xl text-blue-300 font-light tracking-[0.3em] uppercase">Annual Celebration</p>

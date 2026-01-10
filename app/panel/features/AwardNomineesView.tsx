@@ -1,3 +1,4 @@
+// app/panel/features/AwardNomineesView.tsx
 "use client";
 
 import { useState } from "react";

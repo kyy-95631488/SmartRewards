@@ -1,15 +1,17 @@
+// app/panel/features/RecapView.tsx
 "use client";
 
 import { FileText, Calendar, FileSpreadsheet, Download, Medal, Gift } from "lucide-react";
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { DoorprizeWinner, AwardWinnerSlot, AwardNominee, ArchivedSession } from "../types";
+import { DoorprizeWinner, AwardWinnerSlot, AwardNominee, ArchivedSession, DoorprizeParticipant } from "../types";
 
 interface RecapViewProps {
     doorprizeWinners: DoorprizeWinner[];
     awardWinners: AwardWinnerSlot[];
     awardNominees: AwardNominee[];
+    doorprizeParticipants: DoorprizeParticipant[]; // Data peserta untuk lookup nomor undian
     historySessions: ArchivedSession[];
     selectedSession: string;
     setSelectedSession: (id: string) => void;
@@ -19,6 +21,7 @@ export default function RecapView({
     doorprizeWinners,
     awardWinners,
     awardNominees,
+    doorprizeParticipants,
     historySessions,
     selectedSession,
     setSelectedSession
@@ -30,13 +33,19 @@ export default function RecapView({
         return c ? c.company : "Belum ditentukan";
     };
 
+    // Helper untuk cari nomor undian pemenang
+    const getWinnerLotteryNumber = (winnerName: string) => {
+        // Coba cari case insensitive
+        const p = doorprizeParticipants.find(p => p.name.toLowerCase() === winnerName.toLowerCase());
+        return p ? p.lotteryNumber : "-";
+    };
+
     const getAwardRawData = () => {
         return awardWinners.filter(p => p.candidateId).map(p => {
             const nominee = awardNominees.find(c => c.id === p.candidateId);
             return {
                 Event: p.eventLabel || "Main Event",
                 Category: p.category,
-                // Update rank display logic to show ALL ranks clearly
                 Rank: `Juara ${p.rank}`,
                 PT: nominee?.company || "-",
             };
@@ -46,6 +55,7 @@ export default function RecapView({
     const getDoorprizeRawData = () => {
         return doorprizeWinners.map((w, i) => ({
             No: i + 1,
+            NoUndian: getWinnerLotteryNumber(w.name), // Kolom Baru
             Name: w.name,
             Prize: w.prizeName || "Hadiah Doorprize"
         }));
@@ -82,9 +92,9 @@ export default function RecapView({
         });
 
         csvContent += "\nDOORPRIZE WINNERS\n";
-        csvContent += "No,Name,Prize\n";
+        csvContent += "No,No Undian,Name,Prize\n";
         doorprizeData.forEach(row => {
-            csvContent += `${row.No},"${row.Name}","${row.Prize}"\n`;
+            csvContent += `${row.No},"${row.NoUndian}","${row.Name}","${row.Prize}"\n`;
         });
 
         const encodedUri = encodeURI(csvContent);
@@ -117,7 +127,7 @@ export default function RecapView({
         const awardData = getAwardRawData().map(r => [
             r.Event,
             r.Category,
-            r.Rank, // Sudah diformat di getAwardRawData
+            r.Rank, 
             r.PT
         ]);
 
@@ -136,13 +146,14 @@ export default function RecapView({
 
         const doorprizeData = getDoorprizeRawData().map(d => [
             d.No,
+            d.NoUndian,
             d.Name,
             d.Prize
         ]);
 
         autoTable(doc, {
             startY: finalY + 5,
-            head: [["No", "Nama Pemenang", "Hadiah"]],
+            head: [["No", "No. Undian", "Nama Pemenang", "Hadiah"]],
             body: doorprizeData,
             theme: "grid",
             headStyles: { fillColor: [234, 179, 8] }
@@ -230,7 +241,6 @@ export default function RecapView({
                                                 p.rank === 2 ? 'bg-slate-400' : 
                                                 p.rank === 3 ? 'bg-orange-400' : 'bg-indigo-500'
                                             }`}>
-                                                {/* Consistent Label for Recap Table */}
                                                 {`JUARA ${p.rank}`}
                                             </span>
                                         </td>
@@ -255,6 +265,7 @@ export default function RecapView({
                             <thead className="bg-white text-slate-500 border-b border-slate-100 sticky top-0 z-10 shadow-sm">
                                 <tr>
                                     <th className="px-4 py-3 font-bold w-12">No</th>
+                                    <th className="px-4 py-3 font-bold w-24">No Undian</th>
                                     <th className="px-4 py-3 font-bold">Nama Pemenang</th>
                                     <th className="px-4 py-3 font-bold">Hadiah</th>
                                 </tr>
@@ -263,12 +274,15 @@ export default function RecapView({
                                 {doorprizeWinners.map((w, i) => (
                                     <tr key={w.id} className="hover:bg-slate-50">
                                         <td className="px-4 py-3 text-slate-500 font-mono">{i + 1}</td>
+                                        <td className="px-4 py-3 text-blue-600 font-mono font-bold">
+                                            {getWinnerLotteryNumber(w.name)}
+                                        </td>
                                         <td className="px-4 py-3 font-medium text-slate-800">{w.name}</td>
-                                        <td className="px-4 py-3 text-blue-600">{w.prizeName || "Doorprize"}</td>
+                                        <td className="px-4 py-3 text-slate-600">{w.prizeName || "Doorprize"}</td>
                                     </tr>
                                 ))}
                                 {doorprizeWinners.length === 0 && (
-                                    <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-400">Belum ada pemenang</td></tr>
+                                    <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">Belum ada pemenang</td></tr>
                                 )}
                             </tbody>
                         </table>

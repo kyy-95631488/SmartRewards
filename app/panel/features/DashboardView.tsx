@@ -1,3 +1,4 @@
+// app/panel/features/DashboardView.tsx
 "use client";
 
 import { Users, Star, Medal, Gift, ArrowRight, FileText, AlertCircle, Archive, Loader2, RefreshCw } from "lucide-react";

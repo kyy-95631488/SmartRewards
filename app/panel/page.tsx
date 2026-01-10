@@ -1,3 +1,4 @@
+// app/panel/page.tsx
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
@@ -153,12 +154,22 @@ export default function PanelPage() {
 
   const fetchDoorprizeParticipants = useCallback(async () => {
     try {
+      // PERBAIKAN: Hapus orderBy("lotteryNumber", "asc") agar data yang null tetap terambil
       const q = query(collection(db, "doorprize_participants"));
       const querySnapshot = await getDocs(q);
       const data: DoorprizeParticipant[] = querySnapshot.docs.map((doc) => ({
         id: doc.id,
         ...(doc.data() as Omit<DoorprizeParticipant, "id">),
       }));
+
+      // PERBAIKAN: Sorting manual via Javascript
+      // Jika lotteryNumber tidak ada, anggap 0 (muncul paling atas) atau Infinity (paling bawah)
+      data.sort((a, b) => {
+          const numA = a.lotteryNumber ? parseInt(a.lotteryNumber) : 0; 
+          const numB = b.lotteryNumber ? parseInt(b.lotteryNumber) : 0;
+          return numA - numB;
+      });
+
       setDoorprizeParticipants(data);
     } catch (error) {
       console.error("Error fetching doorprize participants:", error);
@@ -200,7 +211,6 @@ export default function PanelPage() {
   const fetchAwardData = useCallback(async () => {
     try {
         if (selectedSession === "active") {
-            // 1. Fetch Nominees
             const qC = query(collection(db, "award_nominees"));
             const snapC = await getDocs(qC);
             const cData: AwardNominee[] = snapC.docs.map((doc) => ({
@@ -209,14 +219,12 @@ export default function PanelPage() {
             }));
             setAwardNominees(cData);
 
-            // 2. Fetch Winners (Slots)
             const qP = query(collection(db, "award_winners"));
             const snapP = await getDocs(qP);
             const pData: AwardWinnerSlot[] = snapP.docs.map((doc) => ({
                 id: doc.id,
                 ...(doc.data() as Omit<AwardWinnerSlot, "id">),
             }));
-            // Sort by eventLabel, then category, then rank
             setAwardWinners(pData.sort((a, b) => {
                 if ((a.eventLabel || "Main") < (b.eventLabel || "Main")) return -1;
                 if ((a.eventLabel || "Main") > (b.eventLabel || "Main")) return 1;
@@ -232,7 +240,6 @@ export default function PanelPage() {
             
             if (docSnap.exists()) {
                 const sessionData = docSnap.data().sessionData;
-                
                 const histWinners = sessionData.award_history_winners || sessionData.royal_winners || [];
 
                 if (histWinners.length > 0) {
@@ -255,7 +262,6 @@ export default function PanelPage() {
 
                 } else if (sessionData.award_winners || sessionData.royal_slots) {
                     const rawSlots = sessionData.award_winners || sessionData.royal_slots;
-                    
                     const sData = rawSlots.map((s: Partial<AwardWinnerSlot>, idx: number) => ({
                         ...s, 
                         id: s.id || `hist_p_${idx}`,
@@ -272,7 +278,6 @@ export default function PanelPage() {
                             ...c, id: c.id || `hist_c_fallback_${idx}` 
                         }));
                     }
-
                     setAwardWinners(sData.sort((a, b) => a.rank - b.rank));
                     setAwardNominees(cData);
                 } else {
@@ -302,9 +307,8 @@ export default function PanelPage() {
 
   // Fetch data based on active tab AND selectedSession
   useEffect(() => {
-    fetchSchedulesAndPasscodes(); // Always fetch settings
+    fetchSchedulesAndPasscodes(); 
     
-    // Reset session to active if not in recap
     if (activeTab !== 'recap' && activeTab !== 'dashboard') {
         if(selectedSession !== 'active') setSelectedSession('active');
     }
@@ -312,6 +316,7 @@ export default function PanelPage() {
     if (activeTab === "recap") {
         fetchHistorySessions(); 
         fetchDoorprizeWinners();
+        if(selectedSession === 'active') fetchDoorprizeParticipants();
         fetchAwardData(); 
     } 
     else if (activeTab === "doorprize") {
@@ -392,34 +397,44 @@ export default function PanelPage() {
   };
 
   // --- HANDLERS FOR DOORPRIZE ---
-  const handleAddDoorprizeParticipant = async (name: string) => {
+  const handleAddDoorprizeParticipant = async (name: string, lotteryNumber: string) => {
     if (!name) return;
     try {
       const newRef = doc(collection(db, "doorprize_participants"));
-      await setDoc(newRef, { name });
+      await setDoc(newRef, { name, lotteryNumber });
       fetchDoorprizeParticipants();
     } catch (error) {
       console.error("Error adding doorprize participant:", error);
     }
   };
 
-  // NEW: Handler Bulk Add Doorprize (FIX UNTUK ERROR ANDA)
-  const handleBulkAddDoorprize = async (names: string[]) => {
+  const handleBulkAddDoorprize = async (data: {name: string, lotteryNumber: string}[]) => {
     setIsSaving(true);
     try {
         const batch = writeBatch(db);
-        names.forEach(name => {
+        data.forEach(item => {
             const newRef = doc(collection(db, "doorprize_participants"));
-            batch.set(newRef, { name: name });
+            batch.set(newRef, { name: item.name, lotteryNumber: item.lotteryNumber });
         });
         await batch.commit();
         fetchDoorprizeParticipants();
-        alert(`${names.length} Peserta doorprize berhasil diimport!`);
+        alert(`${data.length} Peserta doorprize berhasil diimport!`);
     } catch (error) {
         console.error("Error bulk adding doorprize:", error);
         alert("Gagal menyimpan data bulk.");
     } finally {
         setIsSaving(false);
+    }
+  };
+
+  // NEW: Handler Update (Edit) Doorprize
+  const handleUpdateDoorprizeParticipant = async (id: string, name: string, lotteryNumber: string) => {
+    try {
+        const ref = doc(db, "doorprize_participants", id);
+        await updateDoc(ref, { name, lotteryNumber });
+        fetchDoorprizeParticipants();
+    } catch (error) {
+        console.error("Error updating doorprize participant:", error);
     }
   };
 
@@ -432,7 +447,6 @@ export default function PanelPage() {
     }
   };
 
-  // NEW: Handler Bulk Delete Doorprize
   const handleBulkDeleteDoorprize = async (ids: string[]) => {
       setIsSaving(true);
       try {
@@ -456,7 +470,6 @@ export default function PanelPage() {
     if (!singleName) return;
     try {
       const newRef = doc(collection(db, "award_nominees"));
-      // Simpan input sebagai nama company (utama) dan nama customer (copy) agar fleksibel
       await setDoc(newRef, { name: singleName, company: singleName });
       fetchAwardData();
     } catch (error) {
@@ -464,7 +477,6 @@ export default function PanelPage() {
     }
   };
 
-  // NEW HANDLER FOR BULK ADD FROM IMAGE SCAN
   const handleBulkAddNominees = async (names: string[]) => {
       setIsSaving(true);
       try {
@@ -503,7 +515,6 @@ export default function PanelPage() {
     }
   };
 
-  // NEW: Handler Bulk Delete Nominees
   const handleBulkDeleteNominees = async (ids: string[]) => {
       setIsSaving(true);
       try {
@@ -534,7 +545,6 @@ export default function PanelPage() {
   };
 
   const handleInitializeAwards = async () => {
-    // UPDATE: Now initialized 6 slots (3 Winners, 3 Nominees/Runners Up)
     if(!confirm("Apakah Anda yakin ingin membuat/reset default categories (Top Spender, Most Loyal, Rising Star) dengan 6 slot?")) return;
     setIsSaving(true);
     try {
@@ -545,7 +555,6 @@ export default function PanelPage() {
         ];
 
         for(const category of categories) {
-            // LOOP INCREASED TO 6
             for(let rank = 1; rank <= 6; rank++) {
                 const newRef = doc(collection(db, "award_winners"));
                 await setDoc(newRef, {
@@ -565,7 +574,6 @@ export default function PanelPage() {
     }
   }
 
-  // NEW: Add Single Award Category manually with Event Label Logic
   const handleManualAddAward = async (categoryName: string, slotCount: number, eventLabel: string) => {
      if(!categoryName || slotCount < 1) return;
      const finalLabel = eventLabel || "Main Event";
@@ -685,17 +693,13 @@ export default function PanelPage() {
     try {
         const batch = writeBatch(db);
 
-        // 1. Fetch data yang akan diarsipkan
         const dpPartSnap = await getDocs(collection(db, "doorprize_participants"));
         const awardNomSnap = await getDocs(collection(db, "award_nominees"));
         const awardWinSnap = await getDocs(collection(db, "award_winners"));
         const dpWinnersSnap = await getDocs(collection(db, "doorprize_winners")); 
         
-        // --- ADDED: Fetch Award History to reset spin sessions ---
         const awardHistorySnap = await getDocs(collection(db, "award_history"));
 
-        // --- IDENTIFIKASI PEMENANG AWARD ---
-        // Kita butuh ID nominee yang menang agar bisa dihapus. Yang kalah tetap disimpan.
         const winningCandidateIds = new Set<string>();
         awardWinSnap.docs.forEach(doc => {
             const data = doc.data() as AwardWinnerSlot;
@@ -704,7 +708,6 @@ export default function PanelPage() {
             }
         });
         
-        // Buat data history winners yang komplit untuk arsip
         const nominees = awardNomSnap.docs.map(d => ({...d.data(), id: d.id} as AwardNominee));
         const historyWinners = awardWinSnap.docs.map(d => {
             const data = d.data() as AwardWinnerSlot;
@@ -727,47 +730,33 @@ export default function PanelPage() {
                 award_winners: awardWinSnap.docs.map(d => d.data()),
                 award_history_winners: historyWinners,
                 doorprize_winners: dpWinnersSnap.docs.map(d => d.data()),
-                // Archive the award history log as well
                 award_history_log: awardHistorySnap.docs.map(d => d.data())
             }
         };
 
-        // 2. Simpan ke koleksi arsip
         const archiveRef = doc(collection(db, "archived_sessions"));
         batch.set(archiveRef, archiveData);
 
-        // 3. Reset/Bersihkan Koleksi Aktif
-        
-        // Hapus Peserta Doorprize (Selalu dihapus karena per sesi)
         dpPartSnap.docs.forEach((doc) => batch.delete(doc.ref));
 
-        // Hapus Nominees (KONDISIONAL: Hapus HANYA jika mereka MENANG)
         awardNomSnap.docs.forEach((doc) => {
             if (winningCandidateIds.has(doc.id)) {
-                // Hapus pemenang dari daftar nominees aktif agar tidak muncul lagi
                 batch.delete(doc.ref);
             }
-            // Nominee yang kalah (tidak ada di winningCandidateIds) DIBIARKAN (tidak di-delete)
         });
 
-        // Hapus Pemenang Doorprize
         dpWinnersSnap.docs.forEach((doc) => batch.delete(doc.ref));
-
-        // --- ADDED: Hapus Award History (Reset Spin Session) ---
         awardHistorySnap.docs.forEach((doc) => batch.delete(doc.ref));
 
-        // Reset Award Winners (Slots) - Kosongkan candidateId
         awardWinSnap.docs.forEach((doc) => {
             batch.update(doc.ref, { candidateId: "" });
         });
 
-        // Reset Status Session ke Closed
         const configRef = doc(db, "settings", "config");
         batch.update(configRef, { doorprizeStatus: "closed", awardStatus: "closed" });
 
         await batch.commit();
 
-        // 4. Refresh Local Data
         fetchDoorprizeParticipants();
         fetchAwardData();
         fetchSchedulesAndPasscodes();
@@ -784,16 +773,16 @@ export default function PanelPage() {
     }
   };
 
-
+  // PERBAIKAN: Safe check untuk filter
   const filteredDoorprizeParticipants = doorprizeParticipants.filter((p) =>
-    p.name.toLowerCase().includes(searchQuery.toLowerCase())
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    (p.lotteryNumber || "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const filteredAwardNominees = awardNominees.filter((p) =>
     p.company.toLowerCase().includes(searchQuery.toLowerCase()) || p.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // --- RENDER LOADING ---
   if (loading) {
     return (
       <div className="h-[100dvh] flex items-center justify-center bg-slate-50">
@@ -806,11 +795,9 @@ export default function PanelPage() {
 
   if (!userData) return null;
 
-  // --- RENDER MAIN PANEL ---
   return (
     <div className="h-[100dvh] flex bg-slate-50 font-sans text-slate-800 overflow-hidden relative">
       
-      {/* MOBILE SIDEBAR BACKDROP */}
       <AnimatePresence>
         {isSidebarOpen && (
             <motion.div 
@@ -823,7 +810,6 @@ export default function PanelPage() {
         )}
       </AnimatePresence>
 
-      {/* SIDEBAR */}
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
@@ -832,7 +818,6 @@ export default function PanelPage() {
         handleLogout={handleLogout}
       />
 
-      {/* MAIN CONTENT AREA */}
       <main 
         className={`flex-1 h-[100dvh] overflow-y-auto relative transition-all duration-300 ease-in-out bg-slate-50
             ${isSidebarOpen 
@@ -843,7 +828,6 @@ export default function PanelPage() {
       >
         <div className="p-4 md:p-6 lg:p-10 pb-20 md:pb-10"> 
         
-        {/* HEADER */}
         <header className="flex justify-between items-center mb-8 relative z-30">
           <div className="flex items-center gap-3 md:gap-4">
               <button 
@@ -903,7 +887,6 @@ export default function PanelPage() {
           </div>
         </header>
 
-        {/* Dynamic Content */}
         <AnimatePresence mode="wait">
           <motion.div 
             key={activeTab}
@@ -927,7 +910,8 @@ export default function PanelPage() {
               searchQuery={searchQuery} 
               setSearchQuery={setSearchQuery} 
               onAdd={handleAddDoorprizeParticipant} 
-              onBulkAdd={handleBulkAddDoorprize} // <--- PROPERTI YANG HILANG SUDAH DITAMBAHKAN
+              onBulkAdd={handleBulkAddDoorprize}
+              onUpdate={handleUpdateDoorprizeParticipant} 
               onDelete={handleDeleteDoorprizeParticipant} 
               onBulkDelete={handleBulkDeleteDoorprize}
               schedule={doorprizeSchedule}
@@ -980,6 +964,7 @@ export default function PanelPage() {
               doorprizeWinners={doorprizeWinners}
               awardWinners={awardWinners}
               awardNominees={awardNominees}
+              doorprizeParticipants={doorprizeParticipants}
               historySessions={historySessions}
               selectedSession={selectedSession}
               setSelectedSession={setSelectedSession}

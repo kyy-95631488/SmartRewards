@@ -1,13 +1,16 @@
+// app/panel/features/DoorprizeView.tsx
 "use client";
 
 import { useState } from "react";
 import { 
   Unlock, Lock, Power, Clock, Key, Shuffle, Trash2, Search, Plus, Users, 
-  ScanLine, X, Image as ImageIcon, Loader2, Sparkles 
+  ScanLine, X, Image as ImageIcon, Loader2, Sparkles, Hash, Edit, Check,
+  Database, FileSpreadsheet, Download, CloudUpload
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { DoorprizeParticipant } from "../types";
+import { getSpreadsheetData } from "@/app/actions/spreadsheetAction"; // IMPORT SERVER ACTION
 
 // --- HELPER UNTUK GEMINI ---
 async function fileToGenerativePart(file: File) {
@@ -32,9 +35,9 @@ interface DoorprizeViewProps {
   participants: DoorprizeParticipant[];
   searchQuery: string;
   setSearchQuery: (q: string) => void;
-  onAdd: (name: string) => void;
-  // Tambahkan onBulkAdd untuk fitur import/generate massal
-  onBulkAdd: (names: string[]) => Promise<void>; 
+  onAdd: (name: string, lotteryNumber: string) => void;
+  onBulkAdd: (data: {name: string, lotteryNumber: string}[]) => Promise<void>; 
+  onUpdate: (id: string, name: string, lotteryNumber: string) => void;
   onDelete: (id: string) => void;
   onBulkDelete: (ids: string[]) => void;
   schedule: string;
@@ -51,7 +54,8 @@ export default function DoorprizeView({
   searchQuery, 
   setSearchQuery, 
   onAdd, 
-  onBulkAdd, // Prop baru
+  onBulkAdd, 
+  onUpdate, 
   onDelete,
   onBulkDelete,
   schedule,
@@ -63,25 +67,49 @@ export default function DoorprizeView({
   isSaving
 }: DoorprizeViewProps) {
   const [newName, setNewName] = useState("");
+  const [newLotteryNumber, setNewLotteryNumber] = useState(""); 
   const [tempSchedule, setTempSchedule] = useState(schedule || "");
   const [tempPasscode, setTempPasscode] = useState(passcode || "");
       
   // MULTI SELECT STATE
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // --- STATE MODAL AI (IMPORT & GENERATE) ---
+  // EDIT STATE
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editFormData, setEditFormData] = useState({ name: "", lotteryNumber: "" });
+
+  // --- STATE MODAL AI ---
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importMode, setImportMode] = useState<"scan" | "generate">("scan"); // Tab state
+  const [importMode, setImportMode] = useState<"scan" | "generate">("scan"); 
   const [scannedImage, setScannedImage] = useState<File | null>(null);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [aiResults, setAiResults] = useState<string[]>([]);
-  const [generateCount, setGenerateCount] = useState<number>(10); // Default generate 10 nama
+  const [generateCount, setGenerateCount] = useState<number>(10);
+
+  // --- STATE SPREADSHEET ---
+  const [spreadsheetData, setSpreadsheetData] = useState<{name: string, lotteryNumber: string}[]>([]);
+  const [isLoadingSpreadsheet, setIsLoadingSpreadsheet] = useState(false);
+
+  // Helper: Cari nomor undian tertinggi saat ini
+  const getMaxLotteryNumber = () => {
+    if (participants.length === 0) return 0;
+    const numbers = participants
+      .map(p => parseInt(p.lotteryNumber))
+      .filter(n => !isNaN(n));
+    return numbers.length > 0 ? Math.max(...numbers) : 0;
+  };
 
   // --- LOGIKA ADD STANDARD ---
   const handleSubmitAdd = () => {
     if(!newName.trim()) return;
-    onAdd(newName);
+    let finalNumber = newLotteryNumber.trim();
+    if (!finalNumber) {
+      const nextNum = getMaxLotteryNumber() + 1;
+      finalNumber = nextNum.toString().padStart(3, '0');
+    }
+    onAdd(newName, finalNumber);
     setNewName("");
+    setNewLotteryNumber("");
   };
 
   const generatePasscode = () => {
@@ -113,36 +141,78 @@ export default function DoorprizeView({
       }
   };
 
-  // --- LOGIKA AI GEMINI (SCAN & GENERATE) ---
+  // --- LOGIKA EDIT ---
+  const handleStartEdit = (participant: DoorprizeParticipant) => {
+    setEditingId(participant.id);
+    setEditFormData({
+        name: participant.name,
+        lotteryNumber: participant.lotteryNumber || ""
+    });
+  };
 
-  // 1. Scan Gambar (OCR)
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditFormData({ name: "", lotteryNumber: "" });
+  };
+
+  const handleSaveEdit = () => {
+    if (editingId && editFormData.name.trim()) {
+        onUpdate(editingId, editFormData.name, editFormData.lotteryNumber);
+        setEditingId(null);
+    }
+  };
+
+  // --- LOGIKA SPREADSHEET ---
+  const handleFetchSpreadsheet = async () => {
+    setIsLoadingSpreadsheet(true);
+    setSpreadsheetData([]);
+    try {
+      const result = await getSpreadsheetData();
+      if (result.success && result.data) {
+        setSpreadsheetData(result.data);
+      } else {
+        alert(result.message || "Gagal mengambil data.");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Terjadi kesalahan koneksi.");
+    } finally {
+      setIsLoadingSpreadsheet(false);
+    }
+  };
+
+  const handleSyncSpreadsheetToFirebase = async () => {
+    if (spreadsheetData.length === 0) return;
+    if (!confirm(`Tambahkan ${spreadsheetData.length} data dari spreadsheet ke database doorprize?`)) return;
+    
+    await onBulkAdd(spreadsheetData);
+    setSpreadsheetData([]); // Clear preview after add
+  };
+
+  // --- LOGIKA AI GEMINI (SCAN & GENERATE) ---
   const handleScanImage = async () => {
     if (!scannedImage) return;
     setIsProcessingAI(true);
-    setAiResults([]); // Reset hasil sebelumnya
+    setAiResults([]); 
     
     try {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
       const imagePart = await fileToGenerativePart(scannedImage);
 
       const prompt = `
         Analisis gambar ini dan ekstrak daftar nama orang lengkap untuk keperluan doorprize.
         Abaikan header tabel, nomor urut, gelar yang tidak perlu, tanggal, atau jabatan.
-        Keluarkan hasilnya HANYA sebagai JSON Array of Strings.
+        Keluarkannya hasilnya HANYA sebagai JSON Array of Strings.
         Contoh: ["Budi Santoso", "Siti Aminah", "Joko Widodo"]
-        Jangan gunakan format markdown (seperti \`\`\`json).
+        Jangan gunakan format markdown.
       `;
 
       const result = await model.generateContent([prompt, imagePart]);
       const response = await result.response;
       let text = response.text();
-      
-      // Bersihkan markdown
       text = text.replace(/```json/g, "").replace(/```/g, "").trim();
 
-      // Cari kurung siku pertama dan terakhir untuk memastikan validitas JSON
       const firstBracket = text.indexOf('[');
       const lastBracket = text.lastIndexOf(']');
       
@@ -159,13 +229,12 @@ export default function DoorprizeView({
       }
     } catch (error) {
       console.error("Gemini Scan Error:", error);
-      alert("Gagal memindai gambar. Periksa API Key atau gambar Anda.");
+      alert("Gagal memindai gambar.");
     } finally {
       setIsProcessingAI(false);
     }
   };
 
-  // 2. Generate Random Names (PERBAIKAN UTAMA DISINI)
   const handleGenerateRandom = async () => {
     if (generateCount <= 0) return;
     setIsProcessingAI(true);
@@ -174,57 +243,45 @@ export default function DoorprizeView({
     try {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
-      // Menggunakan pendekatan Plain Text agar lebih stabil untuk jumlah banyak
       const prompt = `
-        Buatkan daftar ${generateCount} nama orang Indonesia secara acak dan bervariasi (kombinasi nama depan dan belakang yang realistis) untuk simulasi peserta doorprize.
-        
-        INSTRUKSI OUTPUT:
-        1. Tulis HANYA nama saja.
-        2. Tulis satu nama per baris (separator newline).
-        3. JANGAN gunakan nomor urut, bullet point, tanda kutip, atau format JSON.
-        4. JANGAN ada teks pengantar atau penutup.
+        Buatkan daftar ${generateCount} nama orang Indonesia secara acak.
+        Output: HANYA nama saja, satu per baris.
       `;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
       let text = response.text();
-      
-      // Bersihkan markdown jika ada
       text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+      const names = text.split('\n').map(name => name.replace(/^[\d\.\-\*]+\s+/, "").trim()).filter(n => n);
 
-      // Split berdasarkan baris baru (newline)
-      const names = text.split('\n');
-
-      // Bersihkan setiap baris dari karakter aneh (misal jika AI tetap memberi nomor "1. Budi")
-      const cleanedNames = names
-          .map(name => name.replace(/^[\d\.\-\*]+\s+/, "").trim()) // Hapus "1. ", "- ", "* " di awal
-          .filter(name => name.length > 0 && !name.toLowerCase().includes("daftar nama")); // Hapus baris kosong
-
-      if (cleanedNames.length > 0) {
-          setAiResults(cleanedNames);
-      } else {
-          alert("Gagal generate data. AI tidak memberikan respons valid.");
-      }
+      if (names.length > 0) setAiResults(names);
     } catch (error) {
       console.error("Ai Generate Error:", error);
-      alert("Gagal generate nama random. Periksa koneksi atau API Key.");
+      alert("Gagal generate.");
     } finally {
       setIsProcessingAI(false);
     }
   };
 
-  // Simpan Hasil (Baik dari Scan maupun Generate)
   const handleSaveAiResults = async () => {
     if (aiResults.length === 0) return;
-    await onBulkAdd(aiResults);
+    let currentMax = getMaxLotteryNumber();
+    const dataToSave = aiResults.map((name) => {
+        currentMax++;
+        return {
+            name: name,
+            lotteryNumber: currentMax.toString().padStart(3, '0')
+        };
+    });
+
+    await onBulkAdd(dataToSave);
     setAiResults([]);
     setScannedImage(null);
     setIsImportModalOpen(false);
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
         
         {/* GRID LAYOUT FOR CONFIGURATION */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -304,11 +361,7 @@ export default function DoorprizeView({
                         className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-blue-500 font-mono tracking-widest text-center font-bold"
                     />
                     <div className="flex gap-2">
-                        <button 
-                            onClick={generatePasscode}
-                            title="Generate Random"
-                            className="p-2 bg-pink-100 text-pink-600 rounded-lg hover:bg-pink-200 transition-colors shrink-0"
-                        >
+                        <button onClick={generatePasscode} className="p-2 bg-pink-100 text-pink-600 rounded-lg hover:bg-pink-200 transition-colors shrink-0">
                             <Shuffle size={18} />
                         </button>
                         <button 
@@ -321,116 +374,252 @@ export default function DoorprizeView({
                     </div>
                 </div>
             </div>
-
         </div>
 
-        {/* LIST CARD */}
+        {/* --- CARD 1: DATABASE LIST (FIREBASE) --- */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-4 md:p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4">
-            <div className="flex gap-2 w-full md:w-auto items-center">
-                 {/* BULK DELETE BUTTON */}
-                 {selectedIds.length > 0 && (
-                     <button 
-                        onClick={handleBulkDeleteAction}
-                        className="px-3 py-2 bg-red-100 text-red-600 hover:bg-red-200 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors animate-in fade-in zoom-in duration-200"
-                     >
-                         <Trash2 size={16} /> Delete ({selectedIds.length})
-                     </button>
-                 )}
-                 
-                <div className="relative flex-1 md:w-64">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <div className="p-4 md:p-6 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+                        <Database size={20} />
+                    </div>
+                    <div>
+                        <h2 className="font-bold text-slate-800">Data Peserta Terdaftar</h2>
+                        <p className="text-xs text-slate-500">Data yang tersimpan di Firebase</p>
+                    </div>
+                </div>
+                <div className="flex gap-2 w-full md:w-auto">
+                    {/* BULK DELETE */}
+                    {selectedIds.length > 0 && (
+                        <button 
+                            onClick={handleBulkDeleteAction}
+                            className="px-3 py-2 bg-red-100 text-red-600 hover:bg-red-200 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors animate-in fade-in zoom-in duration-200"
+                        >
+                            <Trash2 size={16} /> Delete ({selectedIds.length})
+                        </button>
+                    )}
+                     <div className="relative flex-1 md:w-64">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input 
+                            type="text" 
+                            placeholder="Cari peserta..." 
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-sm w-full"
+                        />
+                    </div>
+                    <button 
+                        onClick={() => { setIsImportModalOpen(true); setImportMode("scan"); setAiResults([]); }}
+                        className="px-3 py-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors whitespace-nowrap"
+                        title="AI Tools"
+                    >
+                        <ScanLine size={18} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Input Manual Section */}
+            <div className="p-4 border-b border-slate-100 bg-white">
+                 <div className="flex flex-col sm:flex-row items-center gap-2 w-full">
                     <input 
                         type="text" 
-                        placeholder="Cari peserta..." 
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-10 pr-4 py-2 bg-slate-50 rounded-lg border-none focus:ring-2 focus:ring-blue-100 outline-none text-sm w-full"
+                        placeholder="Nama Peserta Baru" 
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSubmitAdd()}
+                        className="w-full flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
                     />
-                </div>
-
-                {/* --- BUTTON IMPORT / AI --- */}
-                <button 
-                    onClick={() => {
-                        setIsImportModalOpen(true);
-                        setImportMode("scan"); // Default ke scan
-                        setAiResults([]);
-                    }}
-                    className="px-3 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors whitespace-nowrap"
-                    title="Import Gambar / Generate AI"
-                >
-                    <ScanLine size={18} /> <span className="hidden sm:inline">AI Tools</span>
-                </button>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
-            <input 
-                type="text" 
-                placeholder="Nama Peserta Baru" 
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSubmitAdd()}
-                className="w-full sm:w-auto flex-1 md:flex-none px-4 py-2 bg-slate-50 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
-            />
-            <button onClick={handleSubmitAdd} className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors whitespace-nowrap">
-                <Plus size={16} /> Tambah
-            </button>
-            </div>
-        </div>
-        
-        {participants.length === 0 ? (
-            <div className="p-10 flex flex-col items-center justify-center text-center">
-                <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
-                <Users className="text-slate-300 w-8 h-8" />
-                </div>
-                <h3 className="text-slate-500 font-medium">Belum ada peserta doorprize</h3>
-                <p className="text-slate-400 text-sm">Tambahkan peserta baru pada form di atas atau gunakan AI Tools</p>
-            </div>
-        ) : (
-            <div className="overflow-x-auto">
-                <table className="w-full text-left min-w-[500px]">
-                <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
-                    <tr>
-                    <th className="px-6 py-4 w-10">
+                    <div className="relative w-full sm:w-28">
+                        <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                         <input 
-                            type="checkbox" 
-                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                            checked={selectedIds.length === participants.length && participants.length > 0}
-                            onChange={handleSelectAll}
+                            type="text" 
+                            placeholder="Auto" 
+                            title="Kosongkan untuk auto-generate nomor urut"
+                            value={newLotteryNumber}
+                            onChange={(e) => setNewLotteryNumber(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSubmitAdd()}
+                            className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 font-mono"
                         />
-                    </th>
-                    <th className="px-6 py-4 font-bold w-12">No</th>
-                    <th className="px-6 py-4 font-bold">Nama Lengkap</th>
-                    <th className="px-6 py-4 font-bold text-right">Aksi</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                    {participants.map((p, i) => (
-                    <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${selectedIds.includes(p.id) ? 'bg-blue-50/50' : ''}`}>
-                        <td className="px-6 py-4">
-                             <input 
+                    </div>
+                    <button onClick={handleSubmitAdd} className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors whitespace-nowrap">
+                        <Plus size={16} /> Tambah
+                    </button>
+                </div>
+            </div>
+            
+            {/* Table Firebase */}
+            {participants.length === 0 ? (
+                <div className="p-10 flex flex-col items-center justify-center text-center">
+                    <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+                        <Users className="text-slate-300 w-8 h-8" />
+                    </div>
+                    <h3 className="text-slate-500 font-medium">Belum ada peserta doorprize</h3>
+                    <p className="text-slate-400 text-sm">Tambahkan peserta baru atau gunakan import di bawah.</p>
+                </div>
+            ) : (
+                <div className="overflow-x-auto max-h-[400px]">
+                    <table className="w-full text-left min-w-[600px]">
+                    <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider sticky top-0 z-10">
+                        <tr>
+                        <th className="px-6 py-4 w-10 border-b border-slate-200">
+                            <input 
                                 type="checkbox" 
                                 className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                                checked={selectedIds.includes(p.id)}
-                                onChange={() => handleToggleSelect(p.id)}
+                                checked={selectedIds.length === participants.length && participants.length > 0}
+                                onChange={handleSelectAll}
                             />
-                        </td>
-                        <td className="px-6 py-4 text-slate-500 font-mono text-sm whitespace-nowrap">{i + 1}</td>
-                        <td className="px-6 py-4 font-medium text-slate-700 whitespace-nowrap">{p.name}</td>
-                        <td className="px-6 py-4 text-right whitespace-nowrap">
-                        <button onClick={() => onDelete(p.id)} className="p-2 text-slate-400 hover:text-red-500 transition-colors">
-                            <Trash2 size={16} />
-                        </button>
-                        </td>
-                    </tr>
-                    ))}
-                </tbody>
-                </table>
-            </div>
-        )}
+                        </th>
+                        <th className="px-6 py-4 font-bold w-12 border-b border-slate-200">No</th>
+                        <th className="px-6 py-4 font-bold w-32 border-b border-slate-200">No. Undian</th>
+                        <th className="px-6 py-4 font-bold border-b border-slate-200">Nama Lengkap</th>
+                        <th className="px-6 py-4 font-bold text-right border-b border-slate-200">Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {participants.map((p, i) => (
+                        <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${selectedIds.includes(p.id) ? 'bg-blue-50/50' : ''}`}>
+                            <td className="px-6 py-4">
+                                    <input 
+                                        type="checkbox" 
+                                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                        checked={selectedIds.includes(p.id)}
+                                        onChange={() => handleToggleSelect(p.id)}
+                                    />
+                            </td>
+                            <td className="px-6 py-4 text-slate-500 font-mono text-sm whitespace-nowrap">{i + 1}</td>
+                            
+                            {editingId === p.id ? (
+                                <>
+                                    <td className="px-6 py-4">
+                                        <input 
+                                            type="text"
+                                            value={editFormData.lotteryNumber}
+                                            onChange={(e) => setEditFormData({...editFormData, lotteryNumber: e.target.value})}
+                                            className="w-full max-w-[80px] px-2 py-1 border border-blue-300 rounded text-sm font-mono focus:outline-blue-500"
+                                            autoFocus
+                                        />
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <input 
+                                            type="text"
+                                            value={editFormData.name}
+                                            onChange={(e) => setEditFormData({...editFormData, name: e.target.value})}
+                                            className="w-full px-2 py-1 border border-blue-300 rounded text-sm focus:outline-blue-500"
+                                        />
+                                    </td>
+                                    <td className="px-6 py-4 text-right whitespace-nowrap">
+                                        <div className="flex justify-end gap-1">
+                                            <button onClick={handleSaveEdit} className="p-2 bg-green-100 text-green-600 rounded-lg hover:bg-green-200" title="Simpan"><Check size={16} /></button>
+                                            <button onClick={handleCancelEdit} className="p-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200" title="Batal"><X size={16} /></button>
+                                        </div>
+                                    </td>
+                                </>
+                            ) : (
+                                <>
+                                    <td className="px-6 py-4">
+                                        <span className={`inline-block px-2 py-1 rounded font-mono text-xs font-bold border ${p.lotteryNumber ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
+                                            {p.lotteryNumber || "-"}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 font-medium text-slate-700 whitespace-nowrap">{p.name}</td>
+                                    <td className="px-6 py-4 text-right whitespace-nowrap">
+                                        <div className="flex justify-end gap-1">
+                                            <button onClick={() => handleStartEdit(p)} className="p-2 text-slate-400 hover:text-amber-500 transition-colors"><Edit size={16} /></button>
+                                            <button onClick={() => onDelete(p.id)} className="p-2 text-slate-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                                        </div>
+                                    </td>
+                                </>
+                            )}
+                        </tr>
+                        ))}
+                    </tbody>
+                    </table>
+                </div>
+            )}
         </div>
 
-      {/* --- MODAL IMPORT / GENERATE AI --- */}
+        {/* --- CARD 2: SPREADSHEET IMPORT --- */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+             <div className="p-4 md:p-6 bg-emerald-50/50 border-b border-emerald-100 flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
+                        <FileSpreadsheet size={20} />
+                    </div>
+                    <div>
+                        <h2 className="font-bold text-slate-800">Import dari Spreadsheet</h2>
+                        <p className="text-xs text-slate-500">Ambil data nama dan generate nomor undian otomatis</p>
+                    </div>
+                </div>
+                <div className="flex gap-2">
+                     <button 
+                        onClick={handleFetchSpreadsheet}
+                        disabled={isLoadingSpreadsheet}
+                        className="px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors shadow-sm disabled:opacity-50"
+                    >
+                        {isLoadingSpreadsheet ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                        {isLoadingSpreadsheet ? "Mengambil Data..." : "Ambil Data Google Sheet"}
+                    </button>
+                </div>
+            </div>
+            
+            <div className="p-6">
+                {spreadsheetData.length === 0 ? (
+                    <div className="text-center py-8 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                        <p className="text-slate-500 font-medium">Belum ada data yang diambil.</p>
+                        <p className="text-sm text-slate-400 mt-1">Klik tombol &quot;Ambil Data Google Sheet&quot; di atas.</p>
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                            <p className="text-sm font-bold text-slate-600">Preview Data ({spreadsheetData.length} baris)</p>
+                            <button onClick={() => setSpreadsheetData([])} className="text-xs text-red-500 hover:underline">Reset Preview</button>
+                        </div>
+                        
+                        <div className="max-h-[300px] overflow-y-auto border border-slate-200 rounded-lg">
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase sticky top-0">
+                                    <tr>
+                                        <th className="px-4 py-3 font-bold border-b w-16">No</th>
+                                        <th className="px-4 py-3 font-bold border-b w-32">No. Undian</th>
+                                        <th className="px-4 py-3 font-bold border-b">Nama Lengkap</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {spreadsheetData.map((d, i) => (
+                                        <tr key={i} className="bg-white">
+                                            <td className="px-4 py-2 text-xs text-slate-400 font-mono">{i+1}</td>
+                                            <td className="px-4 py-2">
+                                                <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 font-mono text-xs font-bold">
+                                                    {d.lotteryNumber}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-2 text-sm text-slate-700 font-medium">{d.name}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100 flex justify-between items-center">
+                            <div>
+                                <p className="text-sm font-bold text-emerald-800">Siap Sinkronisasi</p>
+                                <p className="text-xs text-emerald-600">Data ini akan dimasukkan ke database Firebase (Card atas).</p>
+                            </div>
+                            <button 
+                                onClick={handleSyncSpreadsheetToFirebase}
+                                disabled={isSaving}
+                                className="px-6 py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors shadow-lg shadow-emerald-200 disabled:opacity-50"
+                            >
+                                <CloudUpload size={18} />
+                                Masukkan ke Database
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+
+      {/* --- MODAL IMPORT / GENERATE AI (EXISTING) --- */}
       <AnimatePresence>
       {isImportModalOpen && (
           <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
@@ -495,8 +684,6 @@ export default function DoorprizeView({
                                         <span className="text-sm font-medium text-slate-700 truncate flex-1">{scannedImage.name}</span>
                                         <button onClick={() => { setScannedImage(null); setAiResults([]); }} className="text-red-500 text-xs font-bold hover:underline">Ganti</button>
                                     </div>
-
-                                    {/* Action Button for Scan */}
                                     {aiResults.length === 0 && !isProcessingAI && (
                                         <div className="text-center">
                                             <button 
@@ -548,7 +735,7 @@ export default function DoorprizeView({
                         </div>
                     )}
 
-                    {/* --- RESULT LIST PREVIEW --- */}
+                    {/* --- RESULT LIST PREVIEW AI --- */}
                     {aiResults.length > 0 && !isProcessingAI && (
                         <div className="mt-4">
                             <div className="flex justify-between items-center mb-2">
@@ -562,6 +749,9 @@ export default function DoorprizeView({
                                         {res}
                                     </div>
                                 ))}
+                            </div>
+                             <div className="mt-2 p-3 bg-blue-50 text-blue-700 text-xs rounded-lg border border-blue-100">
+                                <strong>Info:</strong> Nomor undian akan digenerate otomatis melanjutkan nomor terakhir.
                             </div>
                         </div>
                     )}

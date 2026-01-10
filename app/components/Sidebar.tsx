@@ -1,3 +1,4 @@
+// app/components/Sidebar.tsx
 "use client";
 
 import { LogOut, LayoutDashboard, Users, Medal, Gift, FileText, ChevronRight, X } from "lucide-react";

@@ -1,3 +1,4 @@
+// app/panel/features/AwardsView.tsx
 "use client";
 
 import { useState } from "react";

@@ -16,6 +16,7 @@
     "confetti": "^3.0.1",
     "firebase": "^12.7.0",
     "framer-motion": "^12.23.26",
+    "googleapis": "^170.0.0",
     "jspdf": "^3.0.4",
     "jspdf-autotable": "^5.0.2",
     "lucide-react": "^0.562.0",

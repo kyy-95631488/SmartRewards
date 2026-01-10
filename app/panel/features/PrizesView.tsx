@@ -192,7 +192,7 @@ export default function PrizesView({
             return (
            <div key={prize.id} className={`bg-white rounded-2xl border shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col overflow-hidden group ${prize.isGrandPrize ? 'border-amber-400 ring-2 ring-amber-100' : 'border-slate-100'}`}>
               {/* Image Area */}
-              <div className="relative aspect-[4/3] w-full bg-slate-100 overflow-hidden">
+              <div className="relative aspect-[4/3] w-full bg-white border-b border-slate-50 overflow-hidden">
                   
                   {/* GRAND PRIZE BADGE */}
                   {prize.isGrandPrize && (
@@ -213,10 +213,11 @@ export default function PrizesView({
                       <img 
                         src={prize.image_url} 
                         alt={prize.name} 
-                        className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                        // UPDATED: object-contain agar tidak ter-crop, p-4 agar ada jarak, bg-white
+                        className="absolute inset-0 w-full h-full object-contain p-4 group-hover:scale-110 transition-transform duration-500" 
                       />
                   ) : (
-                      <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center text-slate-300">
+                      <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center text-slate-300 bg-slate-50">
                           <ImageIcon size={32} />
                           <span className="text-xs mt-2 font-medium">No Image</span>
                       </div>
@@ -224,8 +225,8 @@ export default function PrizesView({
                   
                   {/* Action Buttons Overlay */}
                   <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                      <button onClick={() => handleStartEdit(prize)} className="p-2 bg-white text-slate-700 rounded-lg shadow-sm hover:text-blue-600"><Edit3 size={14}/></button>
-                      <button onClick={() => onDelete(prize.id)} className="p-2 bg-white text-slate-700 rounded-lg shadow-sm hover:text-red-600"><Trash2 size={14}/></button>
+                      <button onClick={() => handleStartEdit(prize)} className="p-2 bg-white text-slate-700 rounded-lg shadow-sm hover:text-blue-600 border border-slate-100"><Edit3 size={14}/></button>
+                      <button onClick={() => onDelete(prize.id)} className="p-2 bg-white text-slate-700 rounded-lg shadow-sm hover:text-red-600 border border-slate-100"><Trash2 size={14}/></button>
                   </div>
                   
                   {/* Upload Overlay */}

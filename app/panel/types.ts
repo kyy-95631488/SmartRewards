@@ -10,6 +10,7 @@ export interface UserData {
 export interface DoorprizeParticipant {
   id: string;
   name: string;
+  lotteryNumber: string; // Field Baru
 }
 
 export interface DoorprizeWinner {
@@ -17,6 +18,7 @@ export interface DoorprizeWinner {
   name: string;
   wonAt?: Timestamp;
   prizeName?: string;
+  lotteryNumber?: string; // Optional untuk snapshot
 }
 
 export interface AwardNominee {

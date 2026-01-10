@@ -5,7 +5,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Zap, Gift, PackageOpen, History, Box, Clock, Calendar, Crown, X, Target, Ticket, Users, Search
+  Zap, Gift, PackageOpen, History, Box, Clock, Calendar, Crown, X, Target, Ticket, Users, Search, Trophy, CheckCircle2
 } from "lucide-react";
 import { Timestamp } from "firebase/firestore";
 
@@ -72,14 +72,18 @@ export default function DoorprizeFeature({
   const [showMobilePrizeList, setShowMobilePrizeList] = useState(false);
   const [showMobileParticipantList, setShowMobileParticipantList] = useState(false);
   
-  // State Search Peserta
+  // State Search Peserta & Hasil Akhir
   const [participantSearch, setParticipantSearch] = useState("");
+  const [resultSearch, setResultSearch] = useState(""); // Search untuk Game Over Mode
   
   // State untuk menyimpan hadiah yang dipilih manual oleh MC
   const [selectedPrizeId, setSelectedPrizeId] = useState<string | null>(null);
 
   // List nama pemenang untuk pengecekan strikethrough
   const winnerNames = useMemo(() => doorprizeLog.map(log => log.name), [doorprizeLog]);
+
+  // Mode Game Over (Habis)
+  const isGameOver = totalItemsRemaining === 0 && !isSpinning && !winner && !pendingDoorprize;
 
   // Reset selected prize jika winner muncul atau di reset
   useEffect(() => {
@@ -95,21 +99,31 @@ export default function DoorprizeFeature({
     return a.name.localeCompare(b.name);
   });
 
-  // Filter Participants
+  // Filter Participants Side Menu
   const filteredParticipants = useMemo(() => {
     const search = participantSearch.toLowerCase();
     return participants.filter(p => 
         p.name.toLowerCase().includes(search) || 
         (p.lotteryNumber && p.lotteryNumber.includes(search))
     ).sort((a, b) => {
-         // Sort by lottery number if available
          const numA = parseInt(a.lotteryNumber) || 0;
          const numB = parseInt(b.lotteryNumber) || 0;
          return numA - numB;
     });
   }, [participants, participantSearch]);
 
-  // Komponen Helper untuk Merender Item Hadiah
+  // Filter Result Log (Game Over Mode)
+  const filteredResults = useMemo(() => {
+    const search = resultSearch.toLowerCase();
+    return doorprizeLog.filter(log => 
+      log.name.toLowerCase().includes(search) ||
+      log.prizeName.toLowerCase().includes(search) ||
+      (log.lotteryNumber && log.lotteryNumber.includes(search))
+    );
+  }, [doorprizeLog, resultSearch]);
+
+  // --- COMPONENT HELPERS ---
+
   const renderPrizeItem = (p: Prize) => {
     const isGrand = p.isGrandPrize;
     const outOfStock = p.stock === 0;
@@ -119,7 +133,7 @@ export default function DoorprizeFeature({
       <div 
         key={p.id} 
         onClick={() => {
-            if (!outOfStock && !isSpinning) {
+            if (!outOfStock && !isSpinning && !isGameOver) {
                 setSelectedPrizeId(isSelected ? null : p.id);
             }
         }}
@@ -133,8 +147,6 @@ export default function DoorprizeFeature({
                 : 'bg-slate-900/60 border-white/5 hover:bg-slate-800/80 hover:border-cyan-500/30 cursor-pointer hover:scale-[1.01]'
       } p-3 overflow-hidden shrink-0`}
       >
-        
-        {/* Badge Grand Prize */}
         {isGrand && (
           <div className="absolute top-0 right-0 z-20 pointer-events-none">
               <div className="bg-amber-600/90 text-white text-[9px] font-black px-2 py-0.5 rounded-bl-lg shadow-lg flex items-center gap-1">
@@ -143,7 +155,6 @@ export default function DoorprizeFeature({
           </div>
         )}
 
-        {/* Badge Selected (Target) */}
         {isSelected && (
            <div className="absolute top-0 left-0 z-20 pointer-events-none">
               <div className="bg-green-600/90 text-white text-[9px] font-black px-2 py-0.5 rounded-br-lg shadow-lg flex items-center gap-1">
@@ -152,8 +163,7 @@ export default function DoorprizeFeature({
            </div>
         )}
 
-        {/* Gambar */}
-        <div className={`w-16 h-16 lg:w-14 lg:h-14 rounded-xl overflow-hidden shrink-0 relative bg-white ${isGrand ? 'border border-amber-500' : 'border border-white/10'}`}>
+        <div className={`w-14 h-14 md:w-16 md:h-16 rounded-xl overflow-hidden shrink-0 relative bg-white ${isGrand ? 'border border-amber-500' : 'border border-white/10'}`}>
           {p.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img 
@@ -171,7 +181,6 @@ export default function DoorprizeFeature({
           )}
         </div>
         
-        {/* Text Content */}
         <div className="flex flex-col flex-1 min-w-0 justify-center h-full py-0.5">
           <div className={`text-xs md:text-sm font-bold leading-snug break-words ${isGrand ? 'text-amber-100' : 'text-slate-200'} mb-1`}>
               {p.name}
@@ -188,21 +197,17 @@ export default function DoorprizeFeature({
     );
   };
 
-  // Komponen Helper untuk Merender Item Peserta
   const renderParticipantItem = (p: Participant) => {
-    // Logic: Cek apakah nama peserta ada di list pemenang
     const isWinner = winnerNames.includes(p.name);
-
     return (
         <div 
           key={p.id}
           className={`group flex items-center gap-3 p-3 rounded-xl border transition-all cursor-default ${
             isWinner 
-             ? 'bg-slate-900/40 border-red-500/10 opacity-50 hover:bg-slate-900/40' // Tampilan tercoret/sudah menang
+             ? 'bg-slate-900/40 border-red-500/10 opacity-50 hover:bg-slate-900/40' 
              : 'bg-slate-900/60 border-white/5 hover:bg-slate-800/80 hover:border-blue-500/30'
           }`}
         >
-            {/* Badge Nomor Undian */}
             <div className={`w-10 h-10 shrink-0 rounded-lg flex items-center justify-center shadow-inner transition-colors border ${
                 isWinner 
                 ? 'bg-red-950/30 border-red-500/20' 
@@ -212,8 +217,6 @@ export default function DoorprizeFeature({
                     {p.lotteryNumber || "-"}
                 </span>
             </div>
-
-            {/* Nama Peserta */}
             <div className="flex-1 min-w-0">
                 <div className={`text-sm font-medium truncate transition-colors ${
                     isWinner 
@@ -228,8 +231,98 @@ export default function DoorprizeFeature({
     )
   }
 
+  // --- TAMPILAN KHUSUS JIKA SEMUA HADIAH HABIS (GAME OVER) ---
+  if (isGameOver) {
+    return (
+      <motion.div 
+        key="game-over"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full h-full flex flex-col gap-6 relative z-10 overflow-hidden"
+      >
+        {/* Header Summary */}
+        <div className="shrink-0 text-center flex flex-col items-center justify-center py-4 md:py-8">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-bold uppercase tracking-wider mb-4 animate-pulse">
+                <CheckCircle2 size={14} /> All Distributed
+            </div>
+            <h1 className="text-3xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-200 via-white to-blue-200 drop-shadow-[0_0_30px_rgba(255,255,255,0.2)]">
+                HASIL PENGUNDIAN
+            </h1>
+            <p className="text-slate-400 mt-2 max-w-lg mx-auto text-sm md:text-base">
+                Selamat kepada seluruh pemenang! Berikut adalah rekapitulasi lengkap penerima doorprize.
+            </p>
+        </div>
+
+        {/* Main Content Area - Result Gallery */}
+        <div className="flex-1 min-h-0 bg-slate-900/40 backdrop-blur-xl rounded-[2.5rem] border border-white/5 shadow-2xl flex flex-col overflow-hidden relative mx-0 md:mx-8 mb-4">
+            <div className="p-6 border-b border-white/5 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-900/50">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center text-yellow-400 border border-yellow-500/20">
+                      <Trophy size={20} />
+                   </div>
+                   <div>
+                      <h3 className="text-white font-bold">Hall of Fame</h3>
+                      <p className="text-xs text-slate-400">Total {doorprizeLog.length} Pemenang</p>
+                   </div>
+                </div>
+                
+                <div className="relative w-full md:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                    <input 
+                        type="text" 
+                        placeholder="Cari nama pemenang..." 
+                        value={resultSearch}
+                        onChange={(e) => setResultSearch(e.target.value)}
+                        className="w-full bg-slate-800 border border-white/10 rounded-full py-2 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all"
+                    />
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                    {filteredResults.map((log, i) => (
+                        <motion.div 
+                            key={log.id}
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: i * 0.05 }}
+                            className="bg-slate-800/50 border border-white/5 rounded-2xl p-4 flex flex-col gap-4 hover:bg-slate-800 hover:border-blue-500/30 transition-all group"
+                        >
+                            <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 rounded-xl bg-white shrink-0 p-1 flex items-center justify-center shadow-inner">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    {log.prizeImage ? <img src={log.prizeImage} alt="" className="w-full h-full object-contain" /> : <Gift size={20} className="text-slate-400" />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-[10px] text-slate-500 font-mono mb-0.5">{log.displayTime}</div>
+                                    <div className="text-xs font-bold text-cyan-200 line-clamp-2 leading-tight group-hover:text-cyan-400">{log.prizeName}</div>
+                                </div>
+                            </div>
+                            <div className="pt-3 border-t border-white/5">
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Pemenang</span>
+                                    {log.lotteryNumber && <span className="bg-slate-950 px-1.5 py-0.5 rounded text-[10px] font-mono text-cyan-400 border border-white/10">#{log.lotteryNumber}</span>}
+                                </div>
+                                <div className="text-sm font-bold text-white break-words group-hover:text-blue-300 transition-colors">
+                                    {log.name}
+                                </div>
+                            </div>
+                        </motion.div>
+                    ))}
+                </div>
+                {filteredResults.length === 0 && (
+                     <div className="text-center py-20 text-slate-500">Data tidak ditemukan</div>
+                )}
+            </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // --- TAMPILAN NORMAL (SPINNING MODE) ---
   return (
-    // CONTAINER UTAMA - Grid 5 Kolom (Kiri: Hadiah, Tengah: Stage, Kanan: Peserta)
+    // CONTAINER UTAMA - Grid Responsive: 
+    // Mobile: Flex Column, Tablet: Flex/Grid Hybrid, Desktop: Grid 5 Kolom
     <motion.div 
       key="doorprize" 
       initial={{ opacity: 0 }} 
@@ -238,6 +331,7 @@ export default function DoorprizeFeature({
     >
       
       {/* --- SIDEBAR KIRI (PRIZE LIST) --- */}
+      {/* Hidden on Mobile/Tablet Vertical, Visible on Large Screens */}
       <div className="hidden lg:flex lg:col-span-1 flex-col gap-3 h-full overflow-hidden bg-slate-950/40 backdrop-blur-xl rounded-[2rem] border border-white/5 shadow-2xl order-1">
         <div className="p-5 border-b border-white/5 bg-slate-900/50 shrink-0 z-10 flex justify-between items-center">
            <h3 className="text-sm font-bold text-cyan-400 flex items-center gap-2 uppercase tracking-wide">
@@ -278,7 +372,7 @@ export default function DoorprizeFeature({
           </div>
 
           {/* SPINNER AREA */}
-          <div className="flex-1 min-h-[350px] lg:min-h-0 relative flex flex-col">
+          <div className="flex-1 min-h-[300px] md:min-h-[350px] lg:min-h-0 relative flex flex-col">
              {/* Logic Tampilan Spinner / Winner */}
              {!isSpinning && !winner ? (
               <div className={`flex-1 rounded-[2.5rem] p-6 lg:p-8 border flex flex-col items-center justify-center relative overflow-hidden group transition-all duration-500 ${
@@ -347,14 +441,17 @@ export default function DoorprizeFeature({
                     MENGACAK DATA...
                   </p>
                   
-                  <h2 className="text-4xl sm:text-5xl md:text-7xl font-black text-white break-all w-full blur-[0.5px] relative z-10 leading-tight px-4">
-                    <motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 0.1, repeat: Infinity }}>
+                  <h2 className="text-lg sm:text-xl md:text-3xl lg:text-4xl font-extrabold text-white break-all w-full blur-[0.3px] relative z-10 leading-snug px-4">
+                    <motion.span
+                      animate={{ opacity: [0.3, 1, 0.3] }}
+                      transition={{ duration: 0.1, repeat: Infinity }}
+                    >
                       {rollingName}
                     </motion.span>
                   </h2>
               </div>
              ) : (
-               <motion.div 
+                <motion.div 
                 initial={{ scale: 0.95, opacity: 0 }} 
                 animate={{ scale: 1, opacity: 1 }} 
                 className={`flex-1 bg-gradient-to-b ${winner?.prize.isGrandPrize ? 'from-amber-950 to-black border-amber-500/50 shadow-amber-500/20' : 'from-slate-900 to-black border-cyan-400/50 shadow-cyan-500/20'} rounded-[2.5rem] p-6 md:p-10 border shadow-2xl text-center relative overflow-hidden flex flex-col items-center justify-center w-full`}
@@ -428,6 +525,7 @@ export default function DoorprizeFeature({
         </div>
 
         {/* === KOMPONEN BAWAH: HISTORY (WIDE) === */}
+        {/* PERBAIKAN: Layout Responsive agar Timestamp tidak offside */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           <div className="bg-slate-950/40 backdrop-blur-xl rounded-[2rem] border border-white/5 shadow-2xl overflow-hidden h-full flex flex-col relative">
             <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/5 to-transparent pointer-events-none"></div>
@@ -437,7 +535,7 @@ export default function DoorprizeFeature({
               <div className="bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 text-[10px] px-2 py-1 rounded-md font-mono">{doorprizeLog.length}</div>
             </div>
 
-            {/* CONTAINER LIST PEMENANG - Scrollbar Hidden */}
+            {/* CONTAINER LIST PEMENANG */}
             <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none'] p-3 relative z-10">
               {doorprizeLog.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs gap-3">
@@ -461,11 +559,12 @@ export default function DoorprizeFeature({
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex justify-between items-start gap-2">
-                            <span className="font-bold text-slate-200 text-xs group-hover:text-white transition-colors whitespace-normal break-words leading-tight">
-                                {log.lotteryNumber && <span className="text-cyan-400 font-mono mr-1">#{log.lotteryNumber}</span>}
+                            {/* FIX: Nama peserta bisa wrap, timestamp tidak wrap dan tidak offside */}
+                            <span className="font-bold text-slate-200 text-xs group-hover:text-white transition-colors break-words leading-tight min-w-0">
+                                {log.lotteryNumber && <span className="text-cyan-400 font-mono mr-1 inline-block">#{log.lotteryNumber}</span>}
                                 {log.name}
                             </span>
-                            <span className="text-[9px] text-slate-500 font-mono shrink-0">{log.displayTime}</span>
+                            <span className="text-[9px] text-slate-500 font-mono shrink-0 whitespace-nowrap mt-0.5">{log.displayTime}</span>
                           </div>
                           <div className="text-[10px] text-cyan-400/80 font-medium truncate mt-1">{log.prizeName}</div>
                         </div>
@@ -480,7 +579,7 @@ export default function DoorprizeFeature({
 
       </div>
 
-      {/* --- SIDEBAR KANAN (PARTICIPANT LIST) - NEW FEATURE --- */}
+      {/* --- SIDEBAR KANAN (PARTICIPANT LIST) --- */}
       <div className="hidden lg:flex lg:col-span-1 flex-col gap-3 h-full overflow-hidden bg-slate-950/40 backdrop-blur-xl rounded-[2rem] border border-white/5 shadow-2xl order-3 lg:order-3">
         <div className="p-5 border-b border-white/5 bg-slate-900/50 shrink-0 z-10 flex flex-col gap-3">
            <div className="flex justify-between items-center w-full">
@@ -530,7 +629,7 @@ export default function DoorprizeFeature({
         >
           <Users size={20} />
           <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 rounded-full text-[8px] font-bold flex items-center justify-center text-white border border-slate-900">
-             {participants.length > 99 ? '99+' : participants.length}
+              {participants.length > 99 ? '99+' : participants.length}
           </span>
         </motion.button>
 
@@ -579,13 +678,13 @@ export default function DoorprizeFeature({
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto p-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none'] bg-slate-950/30">
-                 {sortedPrizes.length === 0 ? (
-                    <div className="text-center py-20 text-slate-500 text-sm">Tidak ada hadiah</div>
-                 ) : (
-                    <div className="flex flex-col gap-3">
-                      {sortedPrizes.map((p) => renderPrizeItem(p))}
-                    </div>
-                 )}
+                  {sortedPrizes.length === 0 ? (
+                     <div className="text-center py-20 text-slate-500 text-sm">Tidak ada hadiah</div>
+                  ) : (
+                     <div className="flex flex-col gap-3">
+                       {sortedPrizes.map((p) => renderPrizeItem(p))}
+                     </div>
+                  )}
               </div>
             </motion.div>
           </motion.div>
@@ -639,13 +738,13 @@ export default function DoorprizeFeature({
               </div>
 
               <div className="flex-1 overflow-y-auto p-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none'] bg-slate-950/30">
-                 {filteredParticipants.length === 0 ? (
-                    <div className="text-center py-20 text-slate-500 text-sm">Data tidak ditemukan</div>
-                 ) : (
-                    <div className="flex flex-col gap-2">
-                      {filteredParticipants.map((p) => renderParticipantItem(p))}
-                    </div>
-                 )}
+                  {filteredParticipants.length === 0 ? (
+                     <div className="text-center py-20 text-slate-500 text-sm">Data tidak ditemukan</div>
+                  ) : (
+                     <div className="flex flex-col gap-2">
+                       {filteredParticipants.map((p) => renderParticipantItem(p))}
+                     </div>
+                  )}
               </div>
             </motion.div>
           </motion.div>
@@ -656,7 +755,7 @@ export default function DoorprizeFeature({
   );
 }
 
-// SHARED UTILS (TETAP SAMA SEPERTI SEBELUMNYA)
+// SHARED UTILS
 function CountdownTimer({ targetDate, title, theme = "gold" }: { targetDate: string, title: string, theme?: "gold" | "cyan" }) {
   const [timeLeft, setTimeLeft] = useState<{ days: number, hours: number, minutes: number, seconds: number } | null>(null);
 

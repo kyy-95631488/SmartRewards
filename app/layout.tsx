@@ -26,9 +26,9 @@ export const metadata: Metadata = {
   
   // Konfigurasi Logo (Favicon)
   icons: {
-    icon: "/logo.png", // Pastikan Anda menaruh file 'logo.png' di folder 'public'
-    shortcut: "/logo.png",
-    apple: "/apple-icon.png", // Opsional: icon khusus untuk shortcut di iPhone/iPad
+    icon: "/logo/logo.png", // Pastikan Anda menaruh file 'logo.png' di folder 'public'
+    shortcut: "/logo/logo.png",
+    apple: "/logo/apple-icon.png", // Opsional: icon khusus untuk shortcut di iPhone/iPad
   },
   
   // Konfigurasi Open Graph (Tampilan saat link dibagikan di WA/Sosmed)

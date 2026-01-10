@@ -25,7 +25,7 @@ import DoorprizeFeature from "./components/landing/DoorprizeFeature";
 export interface Participant {
   id: string;
   name: string;
-  lotteryNumber: string; // MODIFIKASI: Menambahkan field lotteryNumber
+  lotteryNumber: string;
 }
 
 export interface Prize {
@@ -44,7 +44,7 @@ export interface WinnerLog {
   prizeImage: string;
   timestamp: Timestamp | null;
   displayTime?: string;
-  lotteryNumber?: string; // MODIFIKASI: Menambahkan field di log
+  lotteryNumber?: string;
 }
 
 interface AwardNominee {
@@ -118,9 +118,9 @@ const getWeightedPrize = (availablePrizes: Prize[]): Prize | null => {
 
   const weights = availablePrizes.map(p => {
     const priceVal = p.price && p.price > 0 ? p.price : 100000;
-    return { 
-        prize: p, 
-        weight: 100000000 / priceVal 
+    return {
+      prize: p,
+      weight: 100000000 / priceVal
     };
   });
 
@@ -129,7 +129,7 @@ const getWeightedPrize = (availablePrizes: Prize[]): Prize | null => {
 
   for (const item of weights) {
     if (randomVal < item.weight) {
-        return item.prize;
+      return item.prize;
     }
     randomVal -= item.weight;
   }
@@ -150,7 +150,7 @@ export default function Home() {
   // Awards Data
   const [awardNominees, setAwardNominees] = useState<AwardNominee[]>([]);
   const [awardSlots, setAwardSlots] = useState<AwardWinnerSlot[]>([]);
-  const [awardHistory, setAwardHistory] = useState<AwardHistoryItem[]>([]); 
+  const [awardHistory, setAwardHistory] = useState<AwardHistoryItem[]>([]);
 
   // Config
   const [config, setConfig] = useState<AppConfig>({
@@ -174,11 +174,10 @@ export default function Home() {
 
   // Confirmation States
   const [pendingDoorprize, setPendingDoorprize] = useState<{ winner: Participant; prize: Prize } | null>(null);
-    
+
   // Award States
-  // MODIFIKASI: Menambahkan lotteryNumber ke state winner
   const [winner, setWinner] = useState<{ name: string; lotteryNumber: string; prize: Prize } | null>(null);
-    
+
   const [awardStep, setAwardStep] = useState(0);
   const [confettiParticles, setConfettiParticles] = useState<Particle[]>([]);
 
@@ -208,23 +207,18 @@ export default function Home() {
   const suspenseAudioRef = useRef<HTMLAudioElement | null>(null);
   const drumrollAudioRef = useRef<HTMLAudioElement | null>(null);
   const fanfareAudioRef = useRef<HTMLAudioElement | null>(null);
-    
+
   const bgmFadeInterval = useRef<NodeJS.Timeout | null>(null);
   const awardSoundTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isMuted, setIsMuted] = useState(false);
   const isMutedRef = useRef(false);
-    
+
   const [isAwardSoundPlaying, setIsAwardSoundPlaying] = useState(false);
 
   // --- INITIALIZE VISUALS & AUDIO ---
   useEffect(() => {
     if (typeof window !== "undefined") {
-      // if (!spinAudioRef.current) {
-      //   spinAudioRef.current = new Audio("/sounds/slot-machine.mp3");
-      //   spinAudioRef.current.loop = true;
-      //   spinAudioRef.current.volume = 0.8;
-      // }
       if (!clapAudioRef.current) {
         clapAudioRef.current = new Audio("/sounds/applause.mp3");
         clapAudioRef.current.volume = 0.8;
@@ -235,7 +229,7 @@ export default function Home() {
       }
       if (!bgmAudioRef.current) {
         bgmAudioRef.current = new Audio("/sounds/backsound.mp3");
-        bgmAudioRef.current.loop = true; 
+        bgmAudioRef.current.loop = true;
         bgmAudioRef.current.volume = 0.4;
       }
       if (!countdownAudioRef.current) {
@@ -247,16 +241,16 @@ export default function Home() {
         suspenseAudioRef.current.volume = 0.8;
       }
       if (!drumrollAudioRef.current) {
-         drumrollAudioRef.current = new Audio("/sounds/drumroll.mp3");
-         drumrollAudioRef.current.loop = true;
-         drumrollAudioRef.current.volume = 0.8;
+        drumrollAudioRef.current = new Audio("/sounds/drumroll.mp3");
+        drumrollAudioRef.current.loop = true;
+        drumrollAudioRef.current.volume = 0.8;
       }
       if (!fanfareAudioRef.current) {
-         fanfareAudioRef.current = new Audio("/sounds/brass-fanfare-reverberated-edit.mp3");
-         fanfareAudioRef.current.volume = 0.8;
-         fanfareAudioRef.current.onended = () => {
-             setIsAwardSoundPlaying(false);
-         };
+        fanfareAudioRef.current = new Audio("/sounds/brass-fanfare-reverberated-edit.mp3");
+        fanfareAudioRef.current.volume = 0.8;
+        fanfareAudioRef.current.onended = () => {
+          setIsAwardSoundPlaying(false);
+        };
       }
     }
 
@@ -272,7 +266,7 @@ export default function Home() {
     return () => {
       window.removeEventListener('click', startAudioOnInteraction);
       window.removeEventListener('keydown', startAudioOnInteraction);
-        
+
       [spinAudioRef, clapAudioRef, winAudioRef, bgmAudioRef, countdownAudioRef, suspenseAudioRef, drumrollAudioRef, fanfareAudioRef].forEach(ref => {
         if (ref.current) {
           ref.current.pause();
@@ -284,20 +278,20 @@ export default function Home() {
 
   const stopAllSounds = () => {
     [spinAudioRef, clapAudioRef, winAudioRef, countdownAudioRef, suspenseAudioRef, drumrollAudioRef, fanfareAudioRef].forEach(ref => {
-        if (ref.current) {
-            ref.current.pause();
-            ref.current.currentTime = 0;
-        }
+      if (ref.current) {
+        ref.current.pause();
+        ref.current.currentTime = 0;
+      }
     });
     setIsAwardSoundPlaying(false);
   };
 
   const smartPlay = (audioRef: React.MutableRefObject<HTMLAudioElement | null>) => {
-    if (isMutedRef.current) return; 
+    if (isMutedRef.current) return;
 
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {});
+      audioRef.current.play().catch(() => { });
     }
   };
 
@@ -316,31 +310,31 @@ export default function Home() {
     setIsAwardSoundPlaying(true);
 
     if (type === 'countdown') {
-        smartStop(suspenseAudioRef);
-        smartStop(drumrollAudioRef);
-        smartStop(fanfareAudioRef);
-        smartPlay(countdownAudioRef); 
-        awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 3500); 
-    } 
+      smartStop(suspenseAudioRef);
+      smartStop(drumrollAudioRef);
+      smartStop(fanfareAudioRef);
+      smartPlay(countdownAudioRef);
+      awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 3500);
+    }
     else if (type === 'suspense') {
-        smartStop(countdownAudioRef);
-        smartStop(drumrollAudioRef);
-        smartStop(fanfareAudioRef);
-        smartPlay(suspenseAudioRef); 
-        awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 2500);
-    } 
+      smartStop(countdownAudioRef);
+      smartStop(drumrollAudioRef);
+      smartStop(fanfareAudioRef);
+      smartPlay(suspenseAudioRef);
+      awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 2500);
+    }
     else if (type === 'drumroll') {
-        smartStop(countdownAudioRef);
-        smartStop(suspenseAudioRef);
-        smartStop(fanfareAudioRef);
-        smartPlay(drumrollAudioRef);
-    } 
+      smartStop(countdownAudioRef);
+      smartStop(suspenseAudioRef);
+      smartStop(fanfareAudioRef);
+      smartPlay(drumrollAudioRef);
+    }
     else if (type === 'fanfare') {
-        smartStop(countdownAudioRef);
-        smartStop(suspenseAudioRef);
-        smartStop(drumrollAudioRef);
-        smartPlay(fanfareAudioRef);
-        awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 4500);
+      smartStop(countdownAudioRef);
+      smartStop(suspenseAudioRef);
+      smartStop(drumrollAudioRef);
+      smartPlay(fanfareAudioRef);
+      awardSoundTimeoutRef.current = setTimeout(() => setIsAwardSoundPlaying(false), 4500);
     }
   };
 
@@ -353,54 +347,54 @@ export default function Home() {
 
   const toggleMute = () => {
     setIsMuted(prev => {
-        const newState = !prev;
-        isMutedRef.current = newState;
+      const newState = !prev;
+      isMutedRef.current = newState;
 
-        if (newState) {
-            stopAllSounds();
-            if(bgmAudioRef.current) bgmAudioRef.current.pause();
-        } else {
-            if (bgmAudioRef.current) {
-                bgmAudioRef.current.volume = 0.4;
-                bgmAudioRef.current.play().catch(() => {});
-            }
+      if (newState) {
+        stopAllSounds();
+        if (bgmAudioRef.current) bgmAudioRef.current.pause();
+      } else {
+        if (bgmAudioRef.current) {
+          bgmAudioRef.current.volume = 0.4;
+          bgmAudioRef.current.play().catch(() => { });
         }
-        return newState;
+      }
+      return newState;
     });
   };
 
   // --- BGM FADE LOGIC ---
   useEffect(() => {
     const isEffectPlaying = isSpinning || isAwardSoundPlaying;
-    const targetVolume = isEffectPlaying ? 0.15 : 0.4; 
+    const targetVolume = isEffectPlaying ? 0.15 : 0.4;
 
     if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
     if (isMuted) return;
 
     if (bgmAudioRef.current) {
-        if (bgmAudioRef.current.paused && !isMuted) {
-              bgmAudioRef.current.play().catch(() => {});
-        }
+      if (bgmAudioRef.current.paused && !isMuted) {
+        bgmAudioRef.current.play().catch(() => { });
+      }
 
-        bgmFadeInterval.current = setInterval(() => {
-            if (!bgmAudioRef.current) return;
-            const currentVol = bgmAudioRef.current.volume;
-              
-            if (Math.abs(currentVol - targetVolume) < 0.01) {
-                bgmAudioRef.current.volume = targetVolume;
-                if(bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
-            } else if (currentVol > targetVolume) {
-                bgmAudioRef.current.volume = Math.max(0, currentVol - 0.08); 
-            } else {
-                bgmAudioRef.current.volume = Math.min(0.4, currentVol + 0.05); 
-            }
-        }, 50);
+      bgmFadeInterval.current = setInterval(() => {
+        if (!bgmAudioRef.current) return;
+        const currentVol = bgmAudioRef.current.volume;
+
+        if (Math.abs(currentVol - targetVolume) < 0.01) {
+          bgmAudioRef.current.volume = targetVolume;
+          if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
+        } else if (currentVol > targetVolume) {
+          bgmAudioRef.current.volume = Math.max(0, currentVol - 0.08);
+        } else {
+          bgmAudioRef.current.volume = Math.min(0.4, currentVol + 0.05);
+        }
+      }, 50);
     }
-      
+
     return () => {
-        if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
+      if (bgmFadeInterval.current) clearInterval(bgmFadeInterval.current);
     }
-  }, [isSpinning, isAwardSoundPlaying, isMuted]); 
+  }, [isSpinning, isAwardSoundPlaying, isMuted]);
 
   const resetAll = () => {
     setWinner(null);
@@ -438,7 +432,7 @@ export default function Home() {
 
     if (awardSoundTimeoutRef.current) clearTimeout(awardSoundTimeoutRef.current);
     awardSoundTimeoutRef.current = setTimeout(() => {
-        setIsAwardSoundPlaying(false);
+      setIsAwardSoundPlaying(false);
     }, 3500);
 
     setTimeout(() => {
@@ -516,7 +510,7 @@ export default function Home() {
         if (timeRemaining > 0) {
           setIsLockedOut(true);
           setLockoutTimer(timeRemaining);
-            
+
           if (lockoutIntervalRef.current) clearInterval(lockoutIntervalRef.current);
           lockoutIntervalRef.current = setInterval(() => {
             setLockoutTimer((prev) => {
@@ -543,7 +537,7 @@ export default function Home() {
 
   const mergedAwardWinners = useMemo<MergedAwardWinner[]>(() => {
     const filledSlots = awardSlots.filter(s => s.candidateId && s.candidateId !== "");
-      
+
     return filledSlots.map(slot => {
       const nominee = awardNominees.find(c => c.id === slot.candidateId);
       return {
@@ -555,75 +549,75 @@ export default function Home() {
         company: nominee ? nominee.company : "-"
       };
     }).sort((a, b) => {
-        if (a.eventLabel < b.eventLabel) return -1;
-        if (a.eventLabel > b.eventLabel) return 1;
-        if (a.category < b.category) return -1;
-        if (a.category > b.category) return 1;
-        return b.rank - a.rank;
+      if (a.eventLabel < b.eventLabel) return -1;
+      if (a.eventLabel > b.eventLabel) return 1;
+      if (a.category < b.category) return -1;
+      if (a.category > b.category) return 1;
+      return b.rank - a.rank;
     });
   }, [awardSlots, awardNominees]);
 
   useEffect(() => {
-      if (mergedAwardWinners.length > 0) {
-          const uniqueCats = Array.from(new Set(mergedAwardWinners.map(w => w.category)));
-          const historyCats = new Set(awardHistory.map(h => h.category));
+    if (mergedAwardWinners.length > 0) {
+      const uniqueCats = Array.from(new Set(mergedAwardWinners.map(w => w.category)));
+      const historyCats = new Set(awardHistory.map(h => h.category));
 
-          const firstUnsavedCategory = uniqueCats.find(c => !historyCats.has(c));
+      const firstUnsavedCategory = uniqueCats.find(c => !historyCats.has(c));
 
-          if (firstUnsavedCategory) {
-              const idx = mergedAwardWinners.findIndex(w => w.category === firstUnsavedCategory);
-              // eslint-disable-next-line react-hooks/set-state-in-effect
-              if (idx !== -1) setAwardStep(idx);
-          } else {
-              if (awardHistory.length > 0) {
-                  setAwardStep(mergedAwardWinners.length);
-              }
-          }
+      if (firstUnsavedCategory) {
+        const idx = mergedAwardWinners.findIndex(w => w.category === firstUnsavedCategory);
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (idx !== -1) setAwardStep(idx);
+      } else {
+        if (awardHistory.length > 0) {
+          setAwardStep(mergedAwardWinners.length);
+        }
       }
+    }
   }, [mergedAwardWinners, awardHistory]);
 
   const uniqueCategories = useMemo(() => Array.from(new Set(mergedAwardWinners.map(w => w.category))), [mergedAwardWinners]);
 
   useEffect(() => {
-      if (view === "awards" && awardStep >= mergedAwardWinners.length && !isCarouselPaused && uniqueCategories.length > 1) {
-          const interval = setInterval(() => {
-              setCarouselIndex(prev => (prev + 1) % uniqueCategories.length);
-          }, 8000);
-          return () => clearInterval(interval);
-      }
+    if (view === "awards" && awardStep >= mergedAwardWinners.length && !isCarouselPaused && uniqueCategories.length > 1) {
+      const interval = setInterval(() => {
+        setCarouselIndex(prev => (prev + 1) % uniqueCategories.length);
+      }, 8000);
+      return () => clearInterval(interval);
+    }
   }, [view, awardStep, mergedAwardWinners.length, isCarouselPaused, uniqueCategories.length]);
 
   const totalItemsRemaining = useMemo(() => prizes.reduce((acc, curr) => acc + curr.stock, 0), [prizes]);
-    
+
   const isAwardCompleted = useMemo(() => {
-      if (mergedAwardWinners.length === 0) return false;
-      const uniqueCats = new Set(mergedAwardWinners.map(w => w.category));
-      const historyCats = new Set(awardHistory.map(h => h.category));
-      return uniqueCats.size === historyCats.size && uniqueCats.size > 0;
+    if (mergedAwardWinners.length === 0) return false;
+    const uniqueCats = new Set(mergedAwardWinners.map(w => w.category));
+    const historyCats = new Set(awardHistory.map(h => h.category));
+    return uniqueCats.size === historyCats.size && uniqueCats.size > 0;
   }, [mergedAwardWinners, awardHistory]);
 
   const isDoorprizeCompleted = useMemo(() => {
-      return prizes.length > 0 && totalItemsRemaining === 0;
+    return prizes.length > 0 && totalItemsRemaining === 0;
   }, [prizes, totalItemsRemaining]);
 
   // --- AUTH NAVIGATION ---
   const handleAccessRequest = (targetView: "awards" | "doorprize") => {
-    if (targetView === "awards" && isAwardCompleted) { 
-        setView(targetView); 
-        return; 
+    if (targetView === "awards" && isAwardCompleted) {
+      setView(targetView);
+      return;
     }
-    if (targetView === "doorprize" && isDoorprizeCompleted) { 
-        setView(targetView); 
-        return; 
+    if (targetView === "doorprize" && isDoorprizeCompleted) {
+      setView(targetView);
+      return;
     }
-    
+
     const status = targetView === "doorprize" ? config.doorprizeStatus : config.awardStatus;
     if (status === "closed") { alert("Sesi ini belum dibuka oleh Admin."); return; }
-    
+
     if (authorized[targetView]) { setView(targetView); }
-    else { 
-        setPasscodeModal(targetView); 
-        setPasscodeInput("");
+    else {
+      setPasscodeModal(targetView);
+      setPasscodeInput("");
     }
   };
 
@@ -645,53 +639,51 @@ export default function Home() {
       const newAttempts = failedAttempts + 1;
       setFailedAttempts(newAttempts);
       setPasscodeInput("");
-        
+
       if (newAttempts >= 5) {
-          const lockoutDuration = 30;
-          const unlockTime = Date.now() + (lockoutDuration * 1000);
-          localStorage.setItem("lockout_timestamp", unlockTime.toString());
-          setIsLockedOut(true);
-          setLockoutTimer(lockoutDuration);
-          alert("Terlalu banyak percobaan salah. Sistem dikunci selama 30 detik.");
+        const lockoutDuration = 30;
+        const unlockTime = Date.now() + (lockoutDuration * 1000);
+        localStorage.setItem("lockout_timestamp", unlockTime.toString());
+        setIsLockedOut(true);
+        setLockoutTimer(lockoutDuration);
+        alert("Terlalu banyak percobaan salah. Sistem dikunci selama 30 detik.");
       } else {
-          alert(`Passcode Salah! Percobaan ${newAttempts}/5`);
+        alert(`Passcode Salah! Percobaan ${newAttempts}/5`);
       }
     }
   };
 
   const handleSaveCategoryBatch = async (categoryItems: MergedAwardWinner[]) => {
-    const newItems = categoryItems.filter(item => 
-        !awardHistory.some(h => h.category === item.category && h.rank === item.rank)
+    const newItems = categoryItems.filter(item =>
+      !awardHistory.some(h => h.category === item.category && h.rank === item.rank)
     );
 
     if (newItems.length === 0) return;
 
     try {
-        const batch = writeBatch(db);
-        newItems.forEach(item => {
-            const ref = doc(collection(db, "award_history"));
-            batch.set(ref, {
-                name: item.name,
-                company: item.company,
-                category: item.category,
-                rank: item.rank,
-                eventLabel: item.eventLabel,
-                timestamp: serverTimestamp()
-            });
+      const batch = writeBatch(db);
+      newItems.forEach(item => {
+        const ref = doc(collection(db, "award_history"));
+        batch.set(ref, {
+          name: item.name,
+          company: item.company,
+          category: item.category,
+          rank: item.rank,
+          eventLabel: item.eventLabel,
+          timestamp: serverTimestamp()
         });
-        await batch.commit();
-        console.log("Batch save success for category:", categoryItems[0]?.category);
+      });
+      await batch.commit();
+      console.log("Batch save success for category:", categoryItems[0]?.category);
     } catch (error) {
-        console.error("Batch save failed:", error);
+      console.error("Batch save failed:", error);
     }
   };
 
   // --- LOGIKA DOORPRIZE UTAMA ---
   const handleDoorprizeSpin = async (targetPrizeId?: string | null) => {
-    // 1. Ambil semua yang stok > 0
     const availablePrizes = prizes.filter(p => p.stock > 0);
     const previousWinnerNames = doorprizeLog.map(log => log.name);
-    // LOGIC: Filter peserta yang belum menang
     const eligibleParticipants = participants.filter(p => !previousWinnerNames.includes(p.name));
 
     if (isSpinning || availablePrizes.length === 0 || eligibleParticipants.length === 0) {
@@ -701,71 +693,62 @@ export default function Home() {
       return;
     }
 
-    // --- VARIABEL UNTUK HADIAH TERPILIH ---
     let selectedPrize: Prize | null = null;
 
-    // A. JIKA MC MEMILIH HADIAH SECARA MANUAL
     if (targetPrizeId) {
-        selectedPrize = availablePrizes.find(p => p.id === targetPrizeId) || null;
-        if (!selectedPrize) {
-            alert("Stok hadiah yang dipilih sudah habis!");
-            return;
-        }
-    } 
-    // B. JIKA TIDAK ADA PILIHAN (AUTO RANDOM)
+      selectedPrize = availablePrizes.find(p => p.id === targetPrizeId) || null;
+      if (!selectedPrize) {
+        alert("Stok hadiah yang dipilih sudah habis!");
+        return;
+      }
+    }
     else {
-        // Logika Auto (Regular vs Grand Prize Guard)
-        const regularPrizes = availablePrizes.filter(p => !p.isGrandPrize);
-        const grandPrizes = availablePrizes.filter(p => p.isGrandPrize);
-        let targetPool: Prize[] = [];
+      const regularPrizes = availablePrizes.filter(p => !p.isGrandPrize);
+      const grandPrizes = availablePrizes.filter(p => p.isGrandPrize);
+      let targetPool: Prize[] = [];
 
-        if (regularPrizes.length > 0) {
-            targetPool = regularPrizes;
-        } else {
-            targetPool = grandPrizes;
-        }
+      if (regularPrizes.length > 0) {
+        targetPool = regularPrizes;
+      } else {
+        targetPool = grandPrizes;
+      }
 
-        if (targetPool.length === 0) {
-            alert("Terjadi kesalahan alokasi hadiah.");
-            return;
-        }
+      if (targetPool.length === 0) {
+        alert("Terjadi kesalahan alokasi hadiah.");
+        return;
+      }
 
-        selectedPrize = getWeightedPrize(targetPool);
+      selectedPrize = getWeightedPrize(targetPool);
     }
 
-    // --- PROSES SPINNING ---
     setIsSpinning(true);
     setWinner(null);
     setPendingDoorprize(null);
     setConfettiParticles([]);
-    // MODIFIKASI: Gunakan Drumroll saat mengacak
     smartPlay(drumrollAudioRef);
 
     spinIntervalRef.current = setInterval(() => {
       const randomIndex = Math.floor(Math.random() * participants.length);
       const p = participants[randomIndex];
-      // MODIFIKASI: Menampilkan nomor undian saat spinning (rolling)
       setRollingName(`${p.lotteryNumber ? `[${p.lotteryNumber}] ` : ''}${p.name}`);
     }, 50);
 
     setTimeout(async () => {
       if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
-      // MODIFIKASI: Stop Drumroll
       smartStop(drumrollAudioRef);
       smartPlay(clapAudioRef);
 
       const randomWinnerIndex = getSecureRandomInt(eligibleParticipants.length);
       const finalWinner = eligibleParticipants[randomWinnerIndex];
-       
-      if(!finalWinner || !selectedPrize) {
-          alert("Terjadi kesalahan kalkulasi. Silakan coba lagi.");
-          setIsSpinning(false);
-          setRollingName("Error");
-          return;
+
+      if (!finalWinner || !selectedPrize) {
+        alert("Terjadi kesalahan kalkulasi. Silakan coba lagi.");
+        setIsSpinning(false);
+        setRollingName("Error");
+        return;
       }
 
       triggerFlashEffect();
-      // MODIFIKASI: Set nama akhir dengan format Nomor
       setRollingName(`${finalWinner.lotteryNumber ? `[${finalWinner.lotteryNumber}] ` : ''}${finalWinner.name}`);
       setIsSpinning(false);
       setPendingDoorprize({ winner: finalWinner, prize: selectedPrize });
@@ -775,26 +758,24 @@ export default function Home() {
   const confirmDoorprizeWinner = async () => {
     if (!pendingDoorprize) return;
     const { winner: winParticipant, prize } = pendingDoorprize;
-      
+
     smartPlay(winAudioRef);
     triggerFlashEffect();
 
-    // MODIFIKASI: Sertakan lotteryNumber ke state winner
-    setWinner({ 
-        name: winParticipant.name, 
-        lotteryNumber: winParticipant.lotteryNumber, 
-        prize: prize 
+    setWinner({
+      name: winParticipant.name,
+      lotteryNumber: winParticipant.lotteryNumber,
+      prize: prize
     });
     setConfettiParticles(generateConfetti(200));
 
     try {
       const prizeRef = doc(db, "prizes", prize.id);
       await updateDoc(prizeRef, { stock: prize.stock - 1 });
-      
-      // MODIFIKASI: Simpan juga lotteryNumber ke database log history
+
       await addDoc(collection(db, "doorprize_winners"), {
         name: winParticipant.name,
-        lotteryNumber: winParticipant.lotteryNumber || "", 
+        lotteryNumber: winParticipant.lotteryNumber || "",
         prizeName: prize.name,
         prizeImage: prize.image_url || "",
         timestamp: serverTimestamp()
@@ -830,7 +811,8 @@ export default function Home() {
   }
 
   return (
-    <main className="h-screen w-full relative flex flex-col items-center py-2 md:py-4 overflow-hidden font-sans text-slate-100 bg-slate-950 selection:bg-blue-500 selection:text-white">
+    // Gunakan h-[100dvh] untuk mobile viewport yang lebih baik
+    <main className="h-[100dvh] w-full relative flex flex-col items-center py-2 md:py-4 overflow-hidden font-sans text-slate-100 bg-slate-950 selection:bg-blue-500 selection:text-white">
 
       {/* --- FLASH EFFECT --- */}
       <AnimatePresence>
@@ -918,59 +900,58 @@ export default function Home() {
         {pendingDoorprize && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-hidden">
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-                  className={`w-[150vw] h-[150vw] md:w-[800px] md:h-[800px] ${pendingDoorprize.prize.isGrandPrize ? 'bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.3)_180deg,transparent_360deg)]' : 'bg-[conic-gradient(from_0deg,transparent_0deg,rgba(6,182,212,0.2)_180deg,transparent_360deg)]'} rounded-full blur-3xl opacity-50 transform-gpu will-change-transform`}
-                />
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
+                className={`w-[150vw] h-[150vw] md:w-[800px] md:h-[800px] ${pendingDoorprize.prize.isGrandPrize ? 'bg-[conic-gradient(from_0deg,transparent_0deg,rgba(234,179,8,0.3)_180deg,transparent_360deg)]' : 'bg-[conic-gradient(from_0deg,transparent_0deg,rgba(6,182,212,0.2)_180deg,transparent_360deg)]'} rounded-full blur-3xl opacity-50 transform-gpu will-change-transform`}
+              />
             </div>
-            
-            <motion.div 
-              initial={{ scale: 0.5, y: 100 }} 
-              animate={{ scale: 1, y: 0 }} 
-              className={`bg-slate-900 border-2 ${pendingDoorprize.prize.isGrandPrize ? 'border-yellow-500/50 shadow-[0_0_80px_rgba(234,179,8,0.3)]' : 'border-cyan-500/50 shadow-[0_0_80px_rgba(6,182,212,0.3)]'} p-4 md:p-10 rounded-[2rem] max-w-3xl w-full text-center relative overflow-hidden z-10 m-auto flex flex-col items-center justify-center max-h-[90vh] overflow-y-auto`}
+
+            <motion.div
+              initial={{ scale: 0.5, y: 100 }}
+              animate={{ scale: 1, y: 0 }}
+              className={`bg-slate-900 border-2 ${pendingDoorprize.prize.isGrandPrize ? 'border-yellow-500/50 shadow-[0_0_80px_rgba(234,179,8,0.3)]' : 'border-cyan-500/50 shadow-[0_0_80px_rgba(6,182,212,0.3)]'} p-4 md:p-10 rounded-[2rem] max-w-3xl w-full text-center relative overflow-hidden z-10 m-auto flex flex-col items-center justify-center max-h-[90dvh] overflow-y-auto custom-scrollbar`}
             >
               <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none"></div>
               <div className="relative z-10 w-full flex flex-col items-center">
                 <div className={`${pendingDoorprize.prize.isGrandPrize ? 'text-yellow-400' : 'text-cyan-400'} font-bold tracking-widest uppercase mb-4 md:mb-6 animate-pulse text-xs md:text-sm`}>
-                    {pendingDoorprize.prize.isGrandPrize ? "KONFIRMASI GRAND PRIZE" : "KONFIRMASI HASIL"}
+                  {pendingDoorprize.prize.isGrandPrize ? "KONFIRMASI GRAND PRIZE" : "KONFIRMASI HASIL"}
                 </div>
 
                 {pendingDoorprize && (
                   <div className="flex flex-col items-center justify-center w-full">
-                    {/* MODIFIKASI: Menampilkan Nomor Undian di Modal Konfirmasi */}
                     {pendingDoorprize.winner.lotteryNumber && (
-                        <div className={`mb-2 px-3 py-1 rounded border ${pendingDoorprize.prize.isGrandPrize ? 'bg-yellow-900/40 border-yellow-500/30 text-yellow-200' : 'bg-cyan-900/40 border-cyan-500/30 text-cyan-200'} font-mono text-sm font-bold flex items-center gap-2`}>
-                            <Ticket size={14} /> #{pendingDoorprize.winner.lotteryNumber}
-                        </div>
+                      <div className={`mb-2 px-3 py-1 rounded border ${pendingDoorprize.prize.isGrandPrize ? 'bg-yellow-900/40 border-yellow-500/30 text-yellow-200' : 'bg-cyan-900/40 border-cyan-500/30 text-cyan-200'} font-mono text-sm font-bold flex items-center gap-2`}>
+                        <Ticket size={14} /> #{pendingDoorprize.winner.lotteryNumber}
+                      </div>
                     )}
 
                     <h2 className="text-2xl md:text-4xl font-black text-white mb-2 drop-shadow-md break-words w-full leading-tight text-center px-2">
-                        {pendingDoorprize.winner.name}
+                      {pendingDoorprize.winner.name}
                     </h2>
                     <div className={`h-1 w-24 bg-gradient-to-r from-transparent ${pendingDoorprize.prize.isGrandPrize ? 'via-yellow-500' : 'via-cyan-500'} to-transparent my-4`}></div>
 
                     <div className="w-full bg-slate-950/50 rounded-2xl p-4 md:p-6 border border-white/5 mb-6 md:mb-8 flex flex-col md:flex-row items-center justify-center gap-4 md:gap-8">
-                        <div className="flex justify-center shrink-0">
-                            {pendingDoorprize.prize.image_url ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={pendingDoorprize.prize.image_url} alt="" className={`h-24 md:h-40 w-auto rounded-lg object-contain drop-shadow-lg ${pendingDoorprize.prize.isGrandPrize ? 'border border-yellow-500/30' : ''}`} />
-                            ) : (
-                                <Gift className="text-slate-600" size={60} />
-                            )}
-                        </div>
-                          
-                        <div className="text-center md:text-left flex flex-col items-center md:items-start">
-                           <p className="text-slate-400 text-xs md:text-sm mb-1 uppercase tracking-wider">Mendapatkan Hadiah:</p>
-                           <h3 className={`text-lg md:text-3xl font-bold ${pendingDoorprize.prize.isGrandPrize ? 'text-yellow-400' : 'text-cyan-400'} leading-tight`}>
-                                {pendingDoorprize.prize.name}
-                           </h3>
-                           {pendingDoorprize.prize.isGrandPrize && (
-                               <div className="mt-2 inline-flex items-center gap-1 bg-yellow-500/20 text-yellow-300 text-[10px] px-2 py-1 rounded font-bold border border-yellow-500/30">
-                                    <Crown size={12}/> HADIAH UTAMA
-                               </div>
-                           )}
-                        </div>
+                      <div className="flex justify-center shrink-0">
+                        {pendingDoorprize.prize.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={pendingDoorprize.prize.image_url} alt="" className={`h-24 md:h-40 w-auto rounded-lg object-contain drop-shadow-lg ${pendingDoorprize.prize.isGrandPrize ? 'border border-yellow-500/30' : ''}`} />
+                        ) : (
+                          <Gift className="text-slate-600" size={60} />
+                        )}
+                      </div>
+
+                      <div className="text-center md:text-left flex flex-col items-center md:items-start">
+                        <p className="text-slate-400 text-xs md:text-sm mb-1 uppercase tracking-wider">Mendapatkan Hadiah:</p>
+                        <h3 className={`text-lg md:text-3xl font-bold ${pendingDoorprize.prize.isGrandPrize ? 'text-yellow-400' : 'text-cyan-400'} leading-tight`}>
+                          {pendingDoorprize.prize.name}
+                        </h3>
+                        {pendingDoorprize.prize.isGrandPrize && (
+                          <div className="mt-2 inline-flex items-center gap-1 bg-yellow-500/20 text-yellow-300 text-[10px] px-2 py-1 rounded font-bold border border-yellow-500/30">
+                            <Crown size={12} /> HADIAH UTAMA
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex flex-col sm:flex-row gap-3 md:gap-4 w-full mx-auto">
@@ -999,31 +980,30 @@ export default function Home() {
 
               <div className="flex-1 overflow-auto p-4 md:p-6 custom-scrollbar relative z-10">
                 <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[300px]">
+                  <table className="w-full text-left border-collapse min-w-[300px]">
                     <thead>
-                        <tr className="text-xs text-slate-400 uppercase tracking-wider border-b border-white/10">
+                      <tr className="text-xs text-slate-400 uppercase tracking-wider border-b border-white/10">
                         <th className="py-4 px-2 md:px-4 font-semibold w-12 md:w-16">No</th>
-                        {/* MODIFIKASI: Tambah kolom nomor undian */}
                         <th className="py-4 px-2 md:px-4 font-semibold w-24">No. Undian</th>
                         <th className="py-4 px-2 md:px-4 font-semibold">Nama Kandidat</th>
-                        </tr>
+                      </tr>
                     </thead>
                     <tbody className="text-sm">
-                        {modalData.map((p, i) => (
+                      {modalData.map((p, i) => (
                         <tr key={p.id} className="hover:bg-white/5 border-b border-white/5 last:border-0 transition-colors group">
-                            <td className="py-3 px-2 md:px-4 text-slate-500 font-mono group-hover:text-blue-400 transition-colors">{i + 1}</td>
-                            <td className="py-3 px-2 md:px-4 text-cyan-400 font-mono font-bold">
-                                {/* @ts-expect-error accessing dynamic property */}
-                                {p.lotteryNumber || "-"}
-                            </td>
-                            <td className="py-3 px-2 md:px-4 font-medium text-slate-200 group-hover:text-white">{p.name}</td>
+                          <td className="py-3 px-2 md:px-4 text-slate-500 font-mono group-hover:text-blue-400 transition-colors">{i + 1}</td>
+                          <td className="py-3 px-2 md:px-4 text-cyan-400 font-mono font-bold">
+                            {/* @ts-expect-error accessing dynamic property */}
+                            {p.lotteryNumber || "-"}
+                          </td>
+                          <td className="py-3 px-2 md:px-4 font-medium text-slate-200 group-hover:text-white">{p.name}</td>
                         </tr>
-                        ))}
-                        {modalData.length === 0 && (
+                      ))}
+                      {modalData.length === 0 && (
                         <tr><td colSpan={3} className="text-center py-12 text-slate-500">Database Kosong</td></tr>
-                        )}
+                      )}
                     </tbody>
-                    </table>
+                  </table>
                 </div>
               </div>
             </motion.div>
@@ -1048,7 +1028,7 @@ export default function Home() {
               </motion.button>
             )}
           </div>
-          
+
           <div id="header-actions" className="flex gap-3 w-full md:w-auto justify-end"></div>
         </div>
 
@@ -1107,39 +1087,39 @@ export default function Home() {
           {/* VIEW: AWARDS REVEAL */}
           {view === "awards" && (
             <AwardsFeature
-                config={config}
-                awardStep={awardStep}
-                mergedAwardWinners={mergedAwardWinners}
-                confettiParticles={confettiParticles}
-                carouselIndex={carouselIndex}
-                setCarouselIndex={setCarouselIndex}
-                isCarouselPaused={isCarouselPaused}
-                setIsCarouselPaused={setIsCarouselPaused}
-                uniqueCategories={uniqueCategories}
-                triggerCelebration={triggerCelebration}
-                setAwardStep={setAwardStep}
-                onSaveCategoryBatch={handleSaveCategoryBatch}
-                awardHistory={awardHistory}
-                playSound={handleAwardPlaySound}
-                stopSound={handleStopAwardSound}
+              config={config}
+              awardStep={awardStep}
+              mergedAwardWinners={mergedAwardWinners}
+              confettiParticles={confettiParticles}
+              carouselIndex={carouselIndex}
+              setCarouselIndex={setCarouselIndex}
+              isCarouselPaused={isCarouselPaused}
+              setIsCarouselPaused={setIsCarouselPaused}
+              uniqueCategories={uniqueCategories}
+              triggerCelebration={triggerCelebration}
+              setAwardStep={setAwardStep}
+              onSaveCategoryBatch={handleSaveCategoryBatch}
+              awardHistory={awardHistory}
+              playSound={handleAwardPlaySound}
+              stopSound={handleStopAwardSound}
             />
           )}
 
           {/* VIEW: DOORPRIZE */}
           {view === "doorprize" && (
             <DoorprizeFeature
-                config={config}
-                prizes={prizes}
-                participants={participants}
-                doorprizeLog={doorprizeLog}
-                totalItemsRemaining={totalItemsRemaining}
-                isSpinning={isSpinning}
-                winner={winner}
-                pendingDoorprize={pendingDoorprize}
-                rollingName={rollingName}
-                handleDoorprizeSpin={handleDoorprizeSpin}
-                resetAll={resetAll}
-                confettiParticles={confettiParticles}
+              config={config}
+              prizes={prizes}
+              participants={participants}
+              doorprizeLog={doorprizeLog}
+              totalItemsRemaining={totalItemsRemaining}
+              isSpinning={isSpinning}
+              winner={winner}
+              pendingDoorprize={pendingDoorprize}
+              rollingName={rollingName}
+              handleDoorprizeSpin={handleDoorprizeSpin}
+              resetAll={resetAll}
+              confettiParticles={confettiParticles}
             />
           )}
 
